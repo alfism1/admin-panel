@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+.env
+*.local
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.tsbuildinfo
+
+# Local SQLite databases created by `pnpm db:seed`
+data/

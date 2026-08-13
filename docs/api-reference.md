@@ -1,0 +1,299 @@
+# API reference
+
+Every builder method returns a **new instance** — chains are safe to share and reuse.
+
+Anywhere a signature shows `Resolver<T>`, you may pass either a static value or
+`(ctx: FieldContext) => T`.
+
+```ts
+interface FieldContext {
+  state: unknown;
+  get: <T>(path: string) => T;
+  set: (path: string, value: unknown) => void;
+  record: Record<string, unknown> | null;
+  operation: 'create' | 'edit' | 'view';
+  user: AuthUser | null;
+  can: (permission: string) => boolean;
+}
+```
+
+---
+
+## Form fields
+
+### `Field` — shared by every field
+
+| Method                                                 | Description                                                                                       |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `.label(string \| Resolver<string>)`                   | Overrides the label. Default: `labelize(name)` — `first_name` → "First Name", `role_id` → "Role". |
+| `.hiddenLabel(boolean?)`                               | Renders the control without a visible label (still exposed to screen readers).                    |
+| `.helperText(string \| Resolver<string>)`              | Hint below the control, wired via `aria-describedby`.                                             |
+| `.placeholder(string)`                                 | Placeholder text.                                                                                 |
+| `.autofocus(boolean?)`                                 | Focuses on mount.                                                                                 |
+| `.default(value \| Resolver)`                          | Value used when the record has none.                                                              |
+| `.formatStateUsing(fn)`                                | Transforms the value when hydrating into the form.                                                |
+| `.dehydrateStateUsing(fn)`                             | Transforms the value on submit.                                                                   |
+| `.dehydrated(boolean \| (state) => boolean)`           | Whether to include the field in the payload.                                                      |
+| `.required(boolean? \| Resolver<boolean>)`             | Required rule.                                                                                    |
+| `.nullable()`                                          | Marks the value as nullable.                                                                      |
+| `.minLength(n)` / `.maxLength(n)`                      | String length bounds.                                                                             |
+| `.min(n)` / `.max(n)`                                  | Numeric bounds.                                                                                   |
+| `.email()` / `.url()` / `.numeric()`                   | Format rules.                                                                                     |
+| `.regex(pattern, message?)`                            | Pattern rule.                                                                                     |
+| `.rule((value, allValues) => true \| string)`          | Arbitrary synchronous rule; return the message to fail.                                           |
+| `.unique({ resource, column?, ignoreRecord? })`        | Async check via the data provider.                                                                |
+| `.confirmed()`                                         | Requires a matching `${name}_confirmation` field.                                                 |
+| `.disabled(boolean? \| Resolver<boolean>)`             | Disables the control.                                                                             |
+| `.readOnly(boolean? \| Resolver<boolean>)`             | Read-only control.                                                                                |
+| `.hidden(...)` / `.visible(...)`                       | Visibility; hidden fields are never submitted.                                                    |
+| `.hiddenOn(op)` / `.visibleOn(op)` / `.disabledOn(op)` | Per operation: `'create' \| 'edit' \| 'view'`.                                                    |
+| `.live({ onBlur?, debounce? })`                        | Debounces `afterStateUpdated`. Cross-field reads are reactive without it.                         |
+| `.afterStateUpdated((ctx) => void)`                    | Side effect on change; `ctx` adds `state` and `oldState`.                                         |
+| `.columnSpan(n \| 'full')` / `.columnSpanFull()`       | Grid span inside the parent layout.                                                               |
+| `.authorize(permission \| Resolver<boolean>)`          | Unauthorized fields are not rendered and not submitted.                                           |
+| `.customComponent(Component)`                          | Escape hatch — render your own control.                                                           |
+
+### `TextInput`
+
+`.password()` · `.revealable()` · `.email()` · `.tel()` · `.url()` · `.numeric(step?)` ·
+`.prefix(node)` · `.suffix(node)` · `.mask(pattern)` · `.type(htmlType)`
+
+`mask` uses `9` for a digit and `a` for a letter; every other character is a literal:
+`.mask('9999-9999')`.
+
+### `Textarea`
+
+`.rows(n)` · `.autosize()` — with `.maxLength()` a character counter appears.
+
+### `Select`
+
+`.options(Record<string,string> \| Option[] \| Resolver)` · `.multiple()` · `.searchable()` ·
+`.preload()` · `.relationship({ resource, titleKey, valueKey?, query? })` · `.native()`
+
+- `.relationship()` loads options through the data provider and resolves labels for values that are
+  not on the current page.
+- `.preload()` fetches the full list once instead of searching server-side — right for short lookup
+  tables.
+- `.native()` renders a plain `<select>`; good for short static lists.
+
+### `Checkbox` / `Toggle`
+
+`.inline(boolean?)` · `.onColor(tone)` · `.offColor(tone)` — tones:
+`primary | success | warning | danger | gray`. Both render inline (label beside the control) by
+default; `.inline(false)` stacks them.
+
+### `DatePicker`
+
+`.time()` · `.minDate(Date)` · `.maxDate(Date)` · `.displayFormat(fmt)` · `.native(boolean?)`
+
+Stores an ISO string. `displayFormat` uses `date-fns` tokens.
+
+### `FileUpload`
+
+`.image()` · `.multiple()` · `.maxSize(kb)` · `.acceptedFileTypes([])` · `.directory(path)` ·
+`.uploadHandler(fn)`
+
+Uploads to `POST /uploads` as multipart by default and stores the returned URL.
+
+### `Hidden`
+
+Carries a value through the form without rendering anything.
+
+---
+
+## Form layouts
+
+| Layout                  | Methods                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Section.make(heading)` | `.description(...)` · `.columns(n)` · `.collapsible()` · `.collapsed()` · `.aside()` · `.schema([...])` |
+| `Grid.make(columns?)`   | `.columns(n \| { sm, md, lg })` · `.schema([...])`                                                      |
+| `Tabs.make(id?)`        | `.tabs([Tab.make('Label').icon('file-text').columns(2).schema([...])])`                                 |
+
+Layouts also accept `.visible()`, `.hidden()`, `.visibleOn()`, `.hiddenOn()`, `.authorize()` and
+`.columnSpan()`. All tabs stay mounted, so validation covers fields on inactive tabs.
+
+Supported column counts map to Tailwind classes: `1, 2, 3, 4, 6, 12`.
+
+---
+
+## Table columns
+
+### `Column` — shared by every column
+
+`make(name)` accepts dot notation: `TextColumn.make('role.name')`.
+
+| Method                                             | Description                                                             |
+| -------------------------------------------------- | ----------------------------------------------------------------------- |
+| `.label(string)`                                   | Header text. Pass `''` for an unlabelled column such as an avatar.      |
+| `.sortable(boolean? \| { column })`                | Click to sort: asc → desc → unsorted.                                   |
+| `.searchable(boolean? \| { column })`              | Adds the column to global search; the search box appears automatically. |
+| `.toggleable({ hiddenByDefault? })`                | Adds the column to the "Columns" menu. Preference persists per user.    |
+| `.visible(boolean \| (ctx) => boolean)`            | Conditional column.                                                     |
+| `.authorize(permission)`                           | Hides the column when the permission is missing.                        |
+| `.alignStart()` / `.alignCenter()` / `.alignEnd()` | Cell alignment.                                                         |
+| `.width(css)`                                      | Fixed column width.                                                     |
+| `.wrap()`                                          | Allows the cell to wrap instead of truncating.                          |
+| `.tooltip((record) => string)`                     | Hover text.                                                             |
+| `.url((record) => string, { openInNewTab? })`      | Links the cell.                                                         |
+| `.action((record) => void)`                        | Click handler on the cell.                                              |
+| `.formatStateUsing((state, record) => ReactNode)`  | Full control over the rendered value.                                   |
+| `.default(string)` / `.placeholder(string)`        | Fallback for empty values.                                              |
+| `.customComponent(Component)`                      | Escape hatch.                                                           |
+
+### `TextColumn`
+
+`.limit(n)` · `.words(n)` · `.weight('normal'|'medium'|'semibold'|'bold')` ·
+`.color(tone)` · `.copyable()` · `.prefix(s)` · `.suffix(s)` · `.numeric({ decimals })` ·
+`.money(currency, locale?)` · `.description(fn, { position })` · `.badge(tone?)`
+
+### `BadgeColumn`
+
+`.colors(map | (state, record) => tone)` · `.icons(map)`
+
+Tones: `primary | secondary | success | warning | danger | info | gray`.
+
+### `BooleanColumn`
+
+`.trueIcon(icon)` · `.falseIcon(icon)` · `.trueColor(tone)` · `.falseColor(tone)`
+
+### `ImageColumn`
+
+`.circular()` · `.square()` · `.size(px)` · `.stacked()` · `.defaultImageUrl(url)`
+
+Falls back to initials derived from the record's `name`/`title`.
+
+### `DateColumn`
+
+`.dateFormat(fmt)` · `.dateTimeFormat(fmt?)` · `.since()` · `.timezone('Asia/Jakarta')`
+
+---
+
+## Filters
+
+Filters serialize to a single query-string value (`?f_<name>=…`) so a filtered view is shareable.
+
+| Filter                       | Methods                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| `SelectFilter.make(name)`    | `.options(map)` · `.relationship({ resource, titleKey })` · `.multiple()` · `.searchable()` |
+| `TernaryFilter.make(name)`   | `.trueLabel(s)` · `.falseLabel(s)` · `.blankLabel(s)`                                       |
+| `DateRangeFilter.make(name)` | `.time()` — serializes as `from..to`                                                        |
+
+All filters support `.label(s)`, `.placeholder(s)` and `.authorize(permission)`.
+
+---
+
+## Table schema
+
+```ts
+table: {
+  columns: Column[];
+  filters?: Filter[];
+  actions?: Action[];          // per row
+  bulkActions?: Action[];      // selection bar appears automatically
+  headerActions?: Action[];    // beside the Create button
+  defaultSort?: { column: string; direction: 'asc' | 'desc' };
+  perPageOptions?: number[];   // default [10, 25, 50, 100]
+  defaultPerPage?: number;     // default 25
+  striped?: boolean;
+  poll?: number;               // auto-refetch interval in ms
+  emptyState?: { heading?: string; description?: string; icon?: IconSpec };
+  recordUrl?: (record) => string;
+}
+```
+
+Pagination, sorting, search, column toggling, row selection, URL sync, loading skeletons, empty and
+error states and the responsive card view are all automatic.
+
+---
+
+## Actions
+
+| Method                                                                                  | Description                                                               |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `.label(string \| (record) => string)`                                                  | Button label.                                                             |
+| `.icon(name \| LucideIcon)`                                                             | Registry key or any Lucide component.                                     |
+| `.iconOnly(boolean?)`                                                                   | Renders as a tinted icon button with a tooltip.                           |
+| `.color(tone)` / `.size('sm'\|'md'\|'lg')` / `.tooltip(s)`                              | Presentation.                                                             |
+| `.requiresConfirmation({ heading?, description?, confirmLabel?, cancelLabel?, icon? })` | Confirmation dialog.                                                      |
+| `.form(schema)`                                                                         | Opens a modal built from a form schema; the result arrives as `ctx.data`. |
+| `.modalWidth('sm'\|'md'\|'lg'\|'xl'\|'2xl')`                                            | Modal size.                                                               |
+| `.action(async (ctx) => …)`                                                             | The handler.                                                              |
+| `.url((record) => string, { openInNewTab? })`                                           | Navigation instead of a handler.                                          |
+| `.visible(...)` / `.disabled(...)` / `.authorize(...)`                                  | Gating.                                                                   |
+| `.successNotification(string \| false)` / `.failureNotification(string \| false)`       | Toast control.                                                            |
+
+```ts
+interface ActionContext {
+  record: RecordShape | null; // row actions
+  records: RecordShape[]; // bulk actions
+  data: FormValues; // modal form result
+  refresh: () => void; // invalidate this resource's queries
+  close: () => void;
+  notify: (options: NotifyOptions) => void;
+  navigate: NavigateFunction;
+}
+```
+
+### Built-ins
+
+`ViewAction`, `EditAction`, `DeleteAction`, `CreateAction`, `BulkAction`, `DeleteBulkAction`.
+
+They resolve their route, label, permission and (for deletes) the data-provider call from the
+surrounding resource, so `EditAction.make()` takes no arguments. Anything you set explicitly wins.
+
+---
+
+## Resource definition
+
+```ts
+defineResource({
+  name: 'users',              // registry key and API path segment
+  model?: 'User',
+  route?: '/users',           // defaults to `/${name}`
+  navigation?: { label?, icon?, group?, sort?, badge? } | false,
+  labels?: { singular?, plural? },
+  recordTitleKey?: 'name',    // breadcrumbs and delete confirmations
+  permissions?: { viewAny?, view?, create?, update?, delete? },
+  form?: FormComponent[],
+  table: TableSchema,
+  infolist?: Column[],        // view page; defaults to table.columns
+  pages?: { list?, create?, edit?, view? },   // false to disable, or a component to override
+  dataProvider?: DataProvider,
+});
+```
+
+Generated routes, each wrapped in a permission gate:
+
+| Path              | Page       | Gate      |
+| ----------------- | ---------- | --------- |
+| `/users`          | ListPage   | `viewAny` |
+| `/users/create`   | CreatePage | `create`  |
+| `/users/:id`      | ViewPage   | `view`    |
+| `/users/:id/edit` | EditPage   | `update`  |
+
+---
+
+## Notifications
+
+```ts
+import { notify } from '@/core/ui/notify';
+
+notify.success('Saved.');
+notify.error('Could not save.', 'Check your connection.');
+notify.info(title, description?);
+notify.warning(title, description?);
+```
+
+## Icons
+
+Pass a registry key (`'users'`, `'check-circle'`, …) or any `lucide-react` component:
+
+```ts
+import { Package } from 'lucide-react';
+navigation: {
+  icon: Package;
+}
+```
+
+The registry lives in `src/core/ui/icon.tsx` and exists so icons stay tree-shakeable while still
+being referable by string from resource metadata.
