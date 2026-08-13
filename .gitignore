@@ -11,3 +11,6 @@ dist-ssr
 
 # Local SQLite databases created by `pnpm db:seed`
 data/
+
+# Generated knowledge-graph artifacts
+graphify-out/

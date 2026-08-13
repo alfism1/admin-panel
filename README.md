@@ -117,7 +117,7 @@ export const resources = registerResources([
 
 ## Architecture
 
-```
+```text
 src/
 ├── core/                    ← the framework layer; developers rarely open this
 │   ├── forms/               Field builders, layouts, Zod compiler, SchemaForm renderer
@@ -203,7 +203,7 @@ interface DataProvider {
 
 The default `restDataProvider` maps to:
 
-```
+```http
 GET    /{resource}?page=1&per_page=25&sort=-created_at&search=foo&filter[role_id]=3
 GET    /{resource}/{id}
 POST   /{resource}
@@ -304,6 +304,8 @@ redirect to login), **action** (button not rendered) and **field** (not rendered
 
 ## Further reading
 
+- [`docs/architecture.md`](docs/architecture.md) — the three contracts, and which one to touch to
+  swap the backend, transport or database driver.
 - [`docs/database.md`](docs/database.md) — connecting PostgreSQL, MySQL, SQLite, SQL Server or MongoDB.
 - [`docs/api-reference.md`](docs/api-reference.md) — every field, column, filter and action method.
 - [`docs/recipes.md`](docs/recipes.md) — custom fields, custom columns, swapping the data provider,

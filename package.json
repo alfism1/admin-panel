@@ -11,7 +11,7 @@
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"server/**/*.ts\" \"docs/**/*.md\" \"scripts/*.mjs\" README.md",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"server/**/*.ts\" \"docs/**/*.md\" \"scripts/*.mjs\" README.md AGENTS.md",
     "gen:resource": "node scripts/gen-resource.mjs",
     "dev:api": "tsx watch server/index.ts",
     "dev:full": "concurrently -n web,api -c cyan,magenta \"pnpm dev\" \"pnpm dev:api\"",

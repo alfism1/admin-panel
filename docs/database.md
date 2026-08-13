@@ -24,7 +24,7 @@ So `DATABASE_URL` is read by `server/`, a small Node API that sits between the b
 database. It has no build step and no framework: `node:http`, Knex for SQL, the MongoDB driver for
 Mongo.
 
-```
+```text
 browser ──/api──►  server/  ──DATABASE_URL──►  your database
    VITE_* only        secrets live here
 ```
@@ -72,7 +72,7 @@ Check what was detected without starting anything:
 pnpm db:introspect
 ```
 
-```
+```text
 posts  (pk: id)
   id            number   integer
   title         string   varchar
@@ -169,19 +169,32 @@ allows it.
 
 ## Adding another database
 
-Implement `DatabaseAdapter` from `server/db/types.ts` — seven methods — and return it from
-`connectDatabase()` for your URL scheme. Nothing else in the server knows which database is in use.
+Implement `DatabaseAdapter` from `server/db/types.ts` — twelve methods and a `dialect` string — and
+return it from `connectDatabase()` for your URL scheme. Nothing else in the server knows which
+database is in use.
 
 ```ts
 export interface DatabaseAdapter {
+  readonly dialect: string;
+
+  // Schema & introspection
   resources(): ResourceSchema[];
+  schema(resource: string): ResourceSchema;
+  has(resource: string): boolean;
+
+  // CRUD — these back the REST routes
   list(resource: string, params: ListParams): Promise<ListResult>;
   find(resource: string, id: string): Promise<Row | null>;
   insert(resource: string, data: Row): Promise<Row>;
   update(resource: string, id: string, data: Row): Promise<Row>;
   remove(resource: string, id: string): Promise<void>;
   removeMany(resource: string, ids: string[]): Promise<number>;
-  // …plus schema(), has(), findBy(), count(), close()
+
+  // Used by auth (login by email) and /dashboard/stats
+  findBy(resource: string, column: string, value: unknown): Promise<Row | null>;
+  count(resource: string, where?: Row): Promise<number>;
+
+  close(): Promise<void>;
 }
 ```
 
