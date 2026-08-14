@@ -56,9 +56,11 @@ Vitest + Testing Library, jsdom environment. Tests live in `tests/`, mirroring `
 ```text
 tests/
 ├── setup.ts        jsdom polyfills Radix and react-day-picker need
-├── helpers/        renderWithProviders (router + query + auth), makeFieldContext
+├── helpers/        renderWithProviders (router + query + auth), makeFieldContext,
+│                   makeDataProvider (every method a spy)
+├── App.test.tsx    composition root: real AuthProvider, real route tree
 ├── core/           mirrors src/core/
-├── pages/ · resources/ · lib/
+├── layouts/ · pages/ · resources/ · lib/
 ```
 
 What to reach for:
@@ -66,17 +68,31 @@ What to reach for:
 - **Builders** (fields, columns, filters, actions) — assert on `.definition` and on the resolver
   methods (`isVisible`, `isRequired`, `resolveLabel`). No rendering needed.
 - **Components** — `renderWithProviders` from `tests/helpers/render.tsx`; pass `user: null` for an
-  anonymous visitor, or `permissions: [...]` to test a gate.
+  anonymous visitor, `permissions: [...]` to test a gate, `auth: { login }` to stub one method.
 - **Resolver context** — `makeFieldContext({ values, operation, permissions })` builds a
   `FieldContext` without standing up a form.
+- **Anything that fetches** — `makeDataProvider()` from `tests/helpers/dataProvider.ts` plus
+  `setDataProvider(...)`; restore `restDataProvider` in `afterEach`.
+- **Controls** are driven through a real `SchemaForm` rather than mounted bare, so the React Hook
+  Form wiring is exercised, not just the markup.
 
-Two conventions worth knowing:
+Traps worth knowing before you write a new test:
 
-- A handful of tests are named `KNOWN BUG` / `KNOWN LIMITATION`. They pin behaviour that is wrong
-  but currently shipped, with the fix written in the comment above them. Fixing the source means
-  flipping the assertion in the same commit — that is the point.
+- Tests named `KNOWN BUG` / `KNOWN LIMITATION` pin behaviour that is wrong but currently shipped,
+  with the fix written in the comment above them. Fixing the source means flipping the assertion in
+  the same commit — that is the point.
 - Anything rendering a redirect (`<Navigate>`, `<ProtectedRoute>`) needs real `<Routes>` around it.
   Rendered bare, `<Navigate>` re-mounts on every location change and spins forever.
+- `restoreMocks: true` is on globally, so a module-scope `vi.spyOn` is dead after the first test.
+  Create spies inside `beforeEach`.
+- `beforeEach(() => someMock.mockResolvedValue(x))` returns the mock, which Vitest then calls as a
+  teardown function — firing a stray request. Always use a block body.
+- `SchemaTable` renders the desktop table _and_ the mobile card list; jsdom applies no CSS, so
+  scope row assertions with `within(screen.getByRole('table'))`.
+- While a Radix dialog or menu is open the rest of the page is `aria-hidden`, so role queries will
+  not see it. Close the overlay first, or query inside it.
+- A required field's label reads `Name*`, so `getByLabelText('Name')` misses it — use
+  `getByRole('textbox', { name: 'Name' })`, which respects the `aria-hidden` asterisk.
 
 ## Repository layout
 
