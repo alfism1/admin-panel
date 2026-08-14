@@ -177,32 +177,37 @@ describe('combobox select', () => {
   });
 
   /**
-   * KNOWN BUG — pinned so a fix is a deliberate, visible change.
-   *
-   * `.searchable()` on a Select with *static* options renders a search box that
-   * filters nothing. `Combobox` only filters client-side when no `onSearch` is
-   * supplied:
-   *
-   *     if (!searchable || onSearch || !term) return options;
-   *
-   * but `SelectControl` passes `onSearch={config.searchable ? relationship.onSearch : …}`,
-   * and `useRelationshipOptions` hands back a debounced setter even when there
-   * is no relationship to search. So `onSearch` is always defined, client-side
-   * filtering is skipped, and the callback drives a query that is disabled
-   * (`enabled: Boolean(relationship)`). Typing does nothing at all.
-   *
-   * Fix: in `SelectControl`, only forward `onSearch` when `config.relationship`
-   * is set. Then flip these assertions to expect real filtering.
+   * `Combobox` only filters client-side when no `onSearch` is supplied, and
+   * only a relationship can be searched server-side — so a static searchable
+   * Select must not forward one.
    */
-  it('KNOWN BUG: typing in the search box does not filter static options', async () => {
+  it('filters static options client-side as the user types', async () => {
+    renderField([field.searchable()]);
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.type(await screen.findByPlaceholderText('Search…'), 'draf');
+
+    expect(screen.getByRole('option', { name: 'Draft' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Published' })).not.toBeInTheDocument();
+  });
+
+  it('reports when a search matches no static option', async () => {
     renderField([field.searchable()]);
 
     await userEvent.click(screen.getByRole('combobox'));
     await userEvent.type(await screen.findByPlaceholderText('Search…'), 'zzz');
 
-    expect(screen.getByRole('option', { name: 'Draft' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Published' })).toBeInTheDocument();
-    expect(screen.queryByText('No results found.')).not.toBeInTheDocument();
+    expect(await screen.findByText('No results found.')).toBeInTheDocument();
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+  });
+
+  it('does not fire a query for a static searchable select', async () => {
+    renderField([field.searchable()]);
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.type(await screen.findByPlaceholderText('Search…'), 'draf');
+
+    expect(provider.getList).not.toHaveBeenCalled();
   });
 
   it('does filter client-side where no onSearch is wired — the filter control path', async () => {
@@ -216,6 +221,65 @@ describe('combobox select', () => {
 
     await userEvent.click(screen.getByRole('combobox'));
     expect(await screen.findByRole('option', { name: 'Draft' })).toBeInTheDocument();
+  });
+
+  it('removes a value when its option is picked again while multiple', async () => {
+    const { onSubmit } = renderField([field.multiple()], { status: ['draft', 'published'] });
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Draft' }));
+    await submit();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ status: ['published'] }));
+  });
+
+  it('removes a value from its chip while multiple', async () => {
+    const { onSubmit } = renderField([field.multiple()], { status: ['draft', 'published'] });
+
+    await userEvent.click(screen.getByRole('combobox'));
+    const chips = await screen.findAllByRole('button', { name: /^Draft$/ });
+    await userEvent.click(chips[0]);
+    await submit();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ status: ['published'] }));
+  });
+
+  it('shows no chip row when nothing is selected', async () => {
+    renderField([field.multiple()]);
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await screen.findByRole('listbox');
+
+    expect(screen.queryByRole('button', { name: /^Draft$/ })).not.toBeInTheDocument();
+  });
+
+  it('renders an option description', async () => {
+    renderField([
+      Select.make('status').options([
+        { value: 'draft', label: 'Draft', description: 'Not visible yet' },
+        { value: 'published', label: 'Published' },
+      ]),
+    ]);
+
+    await userEvent.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByText('Not visible yet')).toBeInTheDocument();
+  });
+
+  it('marks a disabled option as disabled', async () => {
+    renderField([
+      Select.make('status').options([{ value: 'draft', label: 'Draft', disabled: true }]),
+    ]);
+
+    await userEvent.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByRole('option', { name: 'Draft' })).toBeDisabled();
+  });
+
+  it('is disabled when the field is read-only', () => {
+    renderField([field.readOnly()]);
+
+    expect(screen.getByRole('combobox')).toBeDisabled();
   });
 
   it('resolves options from other form values', async () => {
@@ -347,14 +411,55 @@ describe('relationship select', () => {
 
   it('de-duplicates an option present in both result sets', async () => {
     provider.getList.mockResolvedValue(listResult([{ id: 1, name: 'Ada' }]));
-    provider.getMany.mockResolvedValue([{ id: 1, name: 'Ada' }]);
+    // A `getMany` that returns more than it was asked for still must not
+    // produce the same option twice.
+    provider.getMany.mockResolvedValue([
+      { id: 99, name: 'Grace' },
+      { id: 1, name: 'Ada' },
+    ]);
 
-    renderField([field], { author_id: 1 });
+    renderField([field], { author_id: 99 });
+
+    await waitFor(() => expect(provider.getMany).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole('combobox'));
+
+    expect(await screen.findAllByRole('option', { name: 'Ada' })).toHaveLength(1);
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+  });
+
+  it('tolerates a row missing the value or title key', async () => {
+    provider.getList.mockResolvedValue(listResult([{ id: 1, name: 'Ada' }, {}]));
+
+    renderField([field]);
 
     await waitFor(() => expect(provider.getList).toHaveBeenCalled());
     await userEvent.click(screen.getByRole('combobox'));
 
-    expect(await screen.findAllByRole('option', { name: 'Ada' })).toHaveLength(1);
+    const options = await screen.findAllByRole('option');
+    expect(options).toHaveLength(2);
+    expect(options[1]).toHaveTextContent('');
+  });
+
+  it('ignores an empty selected value when deciding what is missing', async () => {
+    provider.getList.mockResolvedValue(listResult([{ id: 1, name: 'Ada' }]));
+
+    renderField([field], { author_id: '' });
+
+    await waitFor(() => expect(provider.getList).toHaveBeenCalled());
+    expect(provider.getMany).not.toHaveBeenCalled();
+  });
+
+  it('offers no search box when preloading', async () => {
+    provider.getList.mockResolvedValue(listResult([{ id: 1, name: 'Ada' }]));
+
+    renderField([field.searchable().preload()]);
+
+    await waitFor(() => expect(provider.getList).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole('combobox'));
+
+    // `preload` fetches everything up front, so Combobox filters client-side.
+    await userEvent.type(await screen.findByPlaceholderText('Search…'), 'zzz');
+    expect(await screen.findByText('No results found.')).toBeInTheDocument();
   });
 
   it('searches server-side, debounced, when searchable', async () => {

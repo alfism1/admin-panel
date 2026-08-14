@@ -56,12 +56,15 @@ export function formatFileSize(kilobytes: number): string {
 }
 
 export function fileNameFromUrl(url: string): string {
-  const withoutQuery = url.split(/[?#]/)[0] ?? url;
-  const segment = withoutQuery.split('/').pop() ?? url;
+  // Indexed rather than `.pop()`: `split` always yields at least one element,
+  // so there is no absent-segment case to guard.
+  const withoutQuery = url.split(/[?#]/)[0];
+  const segments = withoutQuery.split('/');
+  const segment = segments[segments.length - 1];
   try {
     return decodeURIComponent(segment) || url;
   } catch {
-    return segment || url;
+    return segment;
   }
 }
 

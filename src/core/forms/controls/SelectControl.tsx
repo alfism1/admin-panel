@@ -88,7 +88,10 @@ export function SelectControl({
         invalid={Boolean(state.error)}
         describedBy={state.describedBy}
         placeholder={state.placeholder ?? 'Select…'}
-        onSearch={config.searchable ? relationship.onSearch : undefined}
+        // Only a relationship can be searched server-side. Forwarding the
+        // debounced setter for static options would suppress Combobox's own
+        // client-side filter and leave the search box inert.
+        onSearch={config.searchable && config.relationship ? relationship.onSearch : undefined}
       />
     </div>
   );

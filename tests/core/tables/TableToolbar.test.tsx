@@ -3,9 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TextColumn } from '@/core/tables/columns/TextColumn';
 import { DateRangeFilter } from '@/core/tables/filters/DateRangeFilter';
+import { Filter } from '@/core/tables/filters/Filter';
 import { SelectFilter } from '@/core/tables/filters/SelectFilter';
 import { TernaryFilter } from '@/core/tables/filters/TernaryFilter';
 import { TableToolbar } from '@/core/tables/TableToolbar';
+import type { FilterControl } from '@/core/tables/types';
 import { renderWithProviders } from '../../helpers/render';
 
 const statusFilter = SelectFilter.make('status').options({
@@ -210,5 +212,79 @@ describe('column toggles', () => {
     await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Status' }));
 
     expect(screen.getByRole('menuitemcheckbox', { name: 'Title' })).toBeInTheDocument();
+  });
+});
+
+describe('editing a filter in the popover', () => {
+  it('reports the picked value for the filter it belongs to', async () => {
+    const onFilterChange = vi.fn();
+    renderToolbar({ searchable: false, filters: [statusFilter], onFilterChange });
+
+    await userEvent.click(screen.getByRole('button', { name: /Filters/ }));
+    const popover = await screen.findByRole('dialog');
+    await userEvent.click(within(popover).getByRole('combobox'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Published' }));
+
+    expect(onFilterChange).toHaveBeenCalledWith(statusFilter, 'published');
+  });
+
+  it('starts every control from an empty value when nothing is set', async () => {
+    renderToolbar({ searchable: false, filters: [statusFilter] });
+
+    await userEvent.click(screen.getByRole('button', { name: /Filters/ }));
+    const popover = await screen.findByRole('dialog');
+
+    expect(within(popover).getByRole('combobox')).toHaveTextContent('All');
+  });
+
+  it('describes a chip from an empty value without crashing', () => {
+    // `describe('')` is reachable while a filter is active on one key and the
+    // chip list re-renders for another.
+    const other = SelectFilter.make('author').options({ '1': 'Ada' });
+    renderToolbar({
+      filters: [statusFilter, other],
+      filterValues: { status: 'draft' },
+    });
+
+    expect(screen.getByRole('button', { name: /Status:\s*Draft/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Author:/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('a filter whose empty value still means something', () => {
+  class PresenceFilter extends Filter {
+    static make(name: string): PresenceFilter {
+      return new PresenceFilter({ name });
+    }
+
+    get control(): FilterControl {
+      return (() => null) as unknown as FilterControl;
+    }
+
+    /** Never empty: "no value" is itself a meaningful selection. */
+    isEmpty(): boolean {
+      return false;
+    }
+
+    describe(value: string): string {
+      return value === '' ? 'any' : value;
+    }
+  }
+
+  it('renders a chip even when the value was never set', () => {
+    const filter = PresenceFilter.make('author');
+    renderToolbar({ searchable: false, filters: [filter], filterValues: {} });
+
+    expect(screen.getByRole('button', { name: /Author:\s*any/ })).toBeInTheDocument();
+  });
+
+  it('clears back to the empty value from the chip', async () => {
+    const filter = PresenceFilter.make('author');
+    const onFilterChange = vi.fn();
+    renderToolbar({ searchable: false, filters: [filter], filterValues: {}, onFilterChange });
+
+    await userEvent.click(screen.getByRole('button', { name: /Author:/ }));
+
+    expect(onFilterChange).toHaveBeenCalledWith(filter, '');
   });
 });

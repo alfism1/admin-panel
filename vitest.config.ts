@@ -34,6 +34,10 @@ export default defineConfig({
       reportsDirectory: './coverage',
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/main.tsx', 'src/vite-env.d.ts', 'src/**/types.ts'],
+      // The suite covers every branch today. Anything a test cannot reach is
+      // marked `/* v8 ignore next */` at the source with the reason, so a drop
+      // here means new code arrived without a test rather than a bad threshold.
+      thresholds: { statements: 100, branches: 100, functions: 100, lines: 100 },
     },
   },
 });

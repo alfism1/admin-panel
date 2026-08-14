@@ -110,6 +110,20 @@ describe('parseDateValue', () => {
   it('returns null for unparseable text', () => {
     expect(parseDateValue('not a date')).toBeNull();
   });
+
+  it('returns null for an epoch that is not a number', () => {
+    expect(parseDateValue(Number.NaN)).toBeNull();
+  });
+
+  it('falls back to the Date constructor for a human-readable string', () => {
+    // Neither the store pattern nor `parseISO` reads this, but `new Date` does.
+    const parsed = parseDateValue('March 1, 2024 14:45:00');
+
+    expect(parsed).toBeInstanceOf(Date);
+    expect(parsed?.getFullYear()).toBe(2024);
+    expect(parsed?.getMonth()).toBe(2);
+    expect(parsed?.getDate()).toBe(1);
+  });
 });
 
 describe('serializeDate', () => {
@@ -145,6 +159,18 @@ describe('coerceDate', () => {
     expect(coerceDate(new Date(2024, 0, 1))).toBeInstanceOf(Date);
     expect(coerceDate('2024-01-01')).toBeInstanceOf(Date);
     expect(coerceDate(1700000000000)).toBeInstanceOf(Date);
+  });
+
+  it('reads a bound written in the field’s own store pattern', () => {
+    const parsed = coerceDate('09:30', { timeOnly: true });
+
+    expect(parsed).toBeInstanceOf(Date);
+    expect(parsed?.getHours()).toBe(9);
+    expect(parsed?.getMinutes()).toBe(30);
+  });
+
+  it('still returns null for a bound it cannot read at all', () => {
+    expect(coerceDate('nonsense', { timeOnly: true })).toBeNull();
   });
 });
 

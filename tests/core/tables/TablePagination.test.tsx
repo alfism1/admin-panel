@@ -105,3 +105,14 @@ describe('rows per page', () => {
     expect(screen.getByRole('combobox', { name: 'Rows per page' })).toHaveTextContent('25');
   });
 });
+
+describe('changing the page size', () => {
+  it('reports the newly chosen size as a number', async () => {
+    const { onPerPageChange } = setup();
+
+    await userEvent.click(screen.getByRole('combobox', { name: 'Rows per page' }));
+    await userEvent.click(await screen.findByRole('option', { name: '50' }));
+
+    expect(onPerPageChange).toHaveBeenCalledWith(50);
+  });
+});

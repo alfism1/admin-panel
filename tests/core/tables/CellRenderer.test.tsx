@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/core/ui/tooltip';
 import { CellRenderer } from '@/core/tables/CellRenderer';
 import { BooleanColumn } from '@/core/tables/columns/BooleanColumn';
+import { DateColumn } from '@/core/tables/columns/DateColumn';
 import { TextColumn } from '@/core/tables/columns/TextColumn';
 import type { Column } from '@/core/tables/Column';
 import type { RecordShape } from '@/core/data/types';
@@ -105,6 +106,50 @@ describe('interactivity', () => {
     renderCell(TextColumn.make('name').tooltip((row) => String(row.role)));
 
     expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
+  });
+
+  it('keeps a link click from also selecting the row', async () => {
+    const onRowClick = vi.fn();
+    renderWithProviders(
+      <TooltipProvider>
+        <div onClick={onRowClick}>
+          <CellRenderer
+            column={TextColumn.make('name').url((row) => `/users/${String(row.id)}`)}
+            record={record}
+          />
+        </div>
+      </TooltipProvider>,
+    );
+
+    await userEvent.click(screen.getByRole('link'));
+
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps an action click from also selecting the row', async () => {
+    const onRowClick = vi.fn();
+    const onClick = vi.fn();
+    renderWithProviders(
+      <TooltipProvider>
+        <div onClick={onRowClick}>
+          <CellRenderer column={TextColumn.make('name').action(onClick)} record={record} />
+        </div>
+      </TooltipProvider>,
+    );
+
+    await userEvent.click(screen.getByRole('button'));
+
+    expect(onClick).toHaveBeenCalledWith(record);
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it('renders a date column through its own cell', () => {
+    const { container } = renderCell(DateColumn.make('joined_at').dateFormat('yyyy-MM-dd'), {
+      ...record,
+      joined_at: '2024-03-01T00:00:00.000Z',
+    });
+
+    expect(container.querySelector('time')).toHaveTextContent('2024-03-01');
   });
 });
 

@@ -15,6 +15,8 @@ export function TabPanelComponent({ layout, renderComponents }: LayoutRenderProp
 }
 
 export function TabsComponent({ layout, ctx, renderComponents }: LayoutRenderProps) {
+  // Defensive: the cast is only sound for a `Tabs`, which always has the array.
+  /* v8 ignore next */
   const tabs = ((layout as Tabs).definition.tabs ?? []).filter((tab) => tab.isActive(ctx));
   const [active, setActive] = React.useState(tabs[0]?.definition.heading ?? '');
 

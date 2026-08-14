@@ -33,6 +33,18 @@ describe('DatePicker shape', () => {
     expect(field.definition.withTime).toBe(false);
   });
 
+  it('seconds(false) leaves the time part as it was', () => {
+    const field = DatePicker.make('at').time().seconds(false);
+    expect(field.definition.withSeconds).toBe(false);
+    expect(field.definition.withTime).toBe(true);
+  });
+
+  it('timeOnly(false) leaves the time part as it was', () => {
+    const field = DatePicker.make('at').time().timeOnly().timeOnly(false);
+    expect(field.definition.timeOnly).toBe(false);
+    expect(field.definition.withTime).toBe(false);
+  });
+
   it('stores calendar and format options', () => {
     const field = DatePicker.make('at')
       .format('yyyy-MM-dd')
@@ -189,22 +201,28 @@ describe('DatePicker.validate', () => {
     expect(field.validate('10:00', ctx, 'Time')).toEqual([]);
   });
 
-  /**
-   * KNOWN LIMITATION — pinned so a fix is a deliberate change.
-   *
-   * `coerceDate` calls `parseDateValue(value)` with no config, so it only ever
-   * understands ISO 8601. A bound written in the field's own store format —
-   * `.minDate('09:00')` on a `.timeOnly()` picker, the natural way to write it —
-   * parses to null and the bound is silently dropped rather than enforced.
-   *
-   * Fix: thread the field's `DateValueConfig` through `resolveMinDate` /
-   * `resolveMaxDate` into `coerceDate`. Then this should report an issue.
-   */
-  it('KNOWN LIMITATION: silently drops a bound written as a bare HH:mm string', () => {
+  it('enforces a bound written in the field’s own store format', () => {
     const field = DatePicker.make('at').timeOnly().minDate('09:00');
 
-    expect(field.resolveMinDate(ctx)).toBeNull();
-    expect(field.validate('08:00', ctx, 'Time')).toEqual([]);
+    expect(field.resolveMinDate(ctx)).not.toBeNull();
+    expect(field.validate('08:00', ctx, 'Time')).toEqual(['Time must be on or after 09:00.']);
+    expect(field.validate('10:00', ctx, 'Time')).toEqual([]);
+  });
+
+  it('enforces a maximum written in the field’s own store format', () => {
+    const field = DatePicker.make('at').format('yyyy-MM-dd').maxDate('2024-06-30');
+
+    expect(field.validate('2024-07-01', ctx, 'Date')).toEqual([
+      'Date must be on or before 30 Jun 2024.',
+    ]);
+    expect(field.validate('2024-06-01', ctx, 'Date')).toEqual([]);
+  });
+
+  it('still reads an ISO bound on a field with a narrower store format', () => {
+    const field = DatePicker.make('at').format('yyyy-MM-dd').minDate('2024-01-01T00:00:00.000Z');
+
+    expect(field.resolveMinDate(ctx)).not.toBeNull();
+    expect(field.validate('2023-12-31', ctx, 'Date')).toHaveLength(1);
   });
 
   it('reports a disabled day', () => {

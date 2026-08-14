@@ -193,6 +193,46 @@ describe('<Topbar>', () => {
 
     expect(screen.getByText('?')).toBeInTheDocument();
   });
+
+  it('navigates to the profile page from the account menu', async () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <Topbar onToggleSidebar={vi.fn()} onOpenMobileNav={vi.fn()} onOpenSearch={vi.fn()} />
+          }
+        />
+        <Route path="/profile" element={<h1>Profile page</h1>} />
+      </Routes>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Profile/ }));
+
+    expect(await screen.findByRole('heading', { name: 'Profile page' })).toBeInTheDocument();
+  });
+
+  it('goes back to the login page after signing out', async () => {
+    const logout = vi.fn().mockResolvedValue(undefined);
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <Topbar onToggleSidebar={vi.fn()} onOpenMobileNav={vi.fn()} onOpenSearch={vi.fn()} />
+          }
+        />
+        <Route path="/login" element={<h1>Login page</h1>} />
+      </Routes>,
+      { auth: { logout } },
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Sign out/ }));
+
+    expect(await screen.findByRole('heading', { name: 'Login page' })).toBeInTheDocument();
+  });
 });
 
 describe('<GlobalSearch>', () => {
@@ -247,6 +287,82 @@ describe('<GlobalSearch>', () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(await screen.findByRole('heading', { name: 'Users page' })).toBeInTheDocument();
+  });
+
+  it('reports when nothing matches', async () => {
+    renderSearch();
+
+    await userEvent.type(await screen.findByLabelText('Search navigation'), 'zzzz');
+
+    expect(screen.getByText('No matches.')).toBeInTheDocument();
+  });
+
+  it('highlights the first result to begin with', async () => {
+    renderSearch();
+
+    const first = (await screen.findByText('Posts')).closest('button');
+    expect(first).toHaveClass('bg-accent');
+  });
+
+  it('moves the highlight with the arrow keys', async () => {
+    renderSearch();
+    const input = await screen.findByLabelText('Search navigation');
+
+    await userEvent.type(input, '{ArrowDown}');
+    expect(screen.getByText('Users').closest('button')).toHaveClass('bg-accent');
+    expect(screen.getByText('Posts').closest('button')).not.toHaveClass('bg-accent');
+
+    await userEvent.type(input, '{ArrowUp}');
+    expect(screen.getByText('Posts').closest('button')).toHaveClass('bg-accent');
+  });
+
+  it('stops at the ends of the list', async () => {
+    renderSearch();
+    const input = await screen.findByLabelText('Search navigation');
+
+    await userEvent.type(input, '{ArrowUp}');
+    expect(screen.getByText('Posts').closest('button')).toHaveClass('bg-accent');
+
+    await userEvent.type(input, '{ArrowDown}{ArrowDown}{ArrowDown}');
+    expect(screen.getByText('Users').closest('button')).toHaveClass('bg-accent');
+  });
+
+  it('follows the highlighted result on Enter', async () => {
+    const { onOpenChange } = renderSearch();
+    const input = await screen.findByLabelText('Search navigation');
+
+    await userEvent.type(input, '{ArrowDown}{Enter}');
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(await screen.findByRole('heading', { name: 'Users page' })).toBeInTheDocument();
+  });
+
+  it('ignores Enter when nothing matches', async () => {
+    const { onOpenChange } = renderSearch();
+    const input = await screen.findByLabelText('Search navigation');
+
+    await userEvent.type(input, 'zzzz{Enter}');
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('follows the hovered result rather than the keyboard cursor', async () => {
+    renderSearch();
+
+    await userEvent.hover(screen.getByText('Users').closest('button') as HTMLElement);
+
+    expect(screen.getByText('Users').closest('button')).toHaveClass('bg-accent');
+  });
+
+  it('resets the highlight when the term changes', async () => {
+    renderSearch();
+    const input = await screen.findByLabelText('Search navigation');
+
+    await userEvent.type(input, '{ArrowDown}');
+    expect(screen.getByText('Users').closest('button')).toHaveClass('bg-accent');
+
+    await userEvent.type(input, 's');
+    expect(screen.getByText('Posts').closest('button')).toHaveClass('bg-accent');
   });
 });
 
@@ -326,6 +442,35 @@ describe('<AppLayout>', () => {
 
     expect(screen.getByText('Page exploded')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+  });
+
+  it('opens the mobile navigation drawer', async () => {
+    renderLayout();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+
+    const drawer = await screen.findByRole('dialog', { name: 'Navigation' });
+    expect(within(drawer).getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+  });
+
+  it('closes the mobile drawer once a destination is chosen', async () => {
+    renderLayout();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    const drawer = await screen.findByRole('dialog', { name: 'Navigation' });
+    await userEvent.click(within(drawer).getByRole('link', { name: /Posts/ }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Navigation' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('opens the command palette from the topbar affordance', async () => {
+    renderLayout();
+
+    await userEvent.click(screen.getByRole('button', { name: /Search/ }));
+
+    expect(await screen.findByLabelText('Search navigation')).toBeInTheDocument();
   });
 });
 

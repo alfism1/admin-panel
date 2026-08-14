@@ -77,7 +77,11 @@ export function ActionRenderer({
     ? action.resolveLabel(record)
     : (builtin.label ?? action.resolveLabel(record));
   const href = config.urlResolver ? config.urlResolver(record) : builtin.href;
-  const confirmation = config.confirmation ?? builtin.confirmation;
+  // `resolveBuiltin` already merges `config.confirmation` over its generated
+  // copy, so the built-in wins here — taking `config.confirmation` first would
+  // discard the record-aware wording for the `{}` the built-ins ship with.
+  const confirmation =
+    config.confirmation === false ? false : (builtin.confirmation ?? config.confirmation);
 
   const execute = async (data: Record<string, unknown>) => {
     await run({ record, records, data, onDone: onCompleted });
@@ -165,8 +169,10 @@ export function ActionRenderer({
     <>
       {trigger}
 
+      {/* The modal is opened by the trigger, never by the dialog itself, so
+          only the dismissal direction is meaningful — as with the alert below. */}
       {config.formSchema ? (
-        <Dialog open={stage === 'form'} onOpenChange={(open) => setStage(open ? 'form' : 'idle')}>
+        <Dialog open={stage === 'form'} onOpenChange={(open) => !open && setStage('idle')}>
           <DialogContent width={config.modalWidth ?? 'md'}>
             <DialogHeader>
               <DialogTitle>{label}</DialogTitle>

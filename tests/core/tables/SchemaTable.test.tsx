@@ -617,3 +617,31 @@ describe('mobile card list', () => {
     expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(4);
   });
 });
+
+describe('striped rows', () => {
+  const dataRows = async () => {
+    const table = await screen.findByRole('table');
+    await within(table).findByText('First post');
+    return within(table)
+      .getAllByRole('row')
+      .filter((row) => row.className.includes('group/row'));
+  };
+
+  it('tints every other row', async () => {
+    renderTable({ striped: true });
+
+    const bodyRows = await dataRows();
+
+    expect(bodyRows).toHaveLength(2);
+    expect(bodyRows[0]).not.toHaveClass('bg-muted/30');
+    expect(bodyRows[1]).toHaveClass('bg-muted/30');
+  });
+
+  it('leaves every row plain when striping is off', async () => {
+    renderTable();
+
+    const bodyRows = await dataRows();
+
+    expect(bodyRows[1]).not.toHaveClass('bg-muted/30');
+  });
+});

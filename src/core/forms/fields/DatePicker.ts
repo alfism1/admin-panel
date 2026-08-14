@@ -115,7 +115,7 @@ export class DatePicker extends Field<string | null, DatePickerConfig> {
   default(value: MaybeResolver<DateBound | null>): this {
     const config = this.config;
     const store = (input: DateBound | null): string | null => {
-      const date = coerceDate(input);
+      const date = coerceDate(input, config);
       return date ? serializeDate(date, config) : null;
     };
 
@@ -129,16 +129,18 @@ export class DatePicker extends Field<string | null, DatePickerConfig> {
   // ------------------------------------------------------------- resolution
 
   resolveMinDate(ctx: FieldContext): Date | null {
-    return coerceDate(resolveValue(this.config.minDate, ctx) ?? null);
+    return coerceDate(resolveValue(this.config.minDate, ctx) ?? null, this.config);
   }
 
   resolveMaxDate(ctx: FieldContext): Date | null {
-    return coerceDate(resolveValue(this.config.maxDate, ctx) ?? null);
+    return coerceDate(resolveValue(this.config.maxDate, ctx) ?? null, this.config);
   }
 
   resolveDisabledDates(ctx: FieldContext): Date[] {
     const dates = resolveValue(this.config.disabledDates, ctx) ?? [];
-    return dates.map(coerceDate).filter((date): date is Date => date !== null);
+    return dates
+      .map((date) => coerceDate(date, this.config))
+      .filter((date): date is Date => date !== null);
   }
 
   /**

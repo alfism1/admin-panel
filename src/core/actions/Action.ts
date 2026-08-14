@@ -87,7 +87,8 @@ export class Action {
     return this.mutate({ tooltip: value });
   }
 
-  requiresConfirmation(options: ConfirmationOptions = {}): this {
+  /** `false` opts a built-in action out of the confirmation it ships with. */
+  requiresConfirmation(options: ConfirmationOptions | false = {}): this {
     return this.mutate({ confirmation: options });
   }
 

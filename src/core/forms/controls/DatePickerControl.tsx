@@ -55,10 +55,10 @@ export function DatePickerControl({
 
   const selected = parseDateValue(value, config);
   const disabled = state.disabled || state.readOnly;
-  const min = coerceDate(resolveValue(config.minDate, ctx) ?? null);
-  const max = coerceDate(resolveValue(config.maxDate, ctx) ?? null);
+  const min = coerceDate(resolveValue(config.minDate, ctx) ?? null, config);
+  const max = coerceDate(resolveValue(config.maxDate, ctx) ?? null, config);
   const blockedDays = (resolveValue(config.disabledDates, ctx) ?? [])
-    .map(coerceDate)
+    .map((date) => coerceDate(date, config))
     .filter((date): date is Date => date !== null);
 
   const step = withSeconds ? 1 : minutesStep ? minutesStep * 60 : undefined;

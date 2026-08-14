@@ -24,10 +24,9 @@ describe('defineResource defaults', () => {
     expect(defineResource({ name: 'product', table }).labels.plural).toBe('Products');
   });
 
-  /** See the `pluralize` note in tests/lib/labelize.test.ts — pinned, not endorsed. */
-  it('KNOWN BUG: double-pluralises a conventionally plural resource name', () => {
-    expect(defineResource({ name: 'users', table }).labels.plural).toBe('Userses');
-    expect(defineResource({ name: 'categories', table }).labels.plural).toBe('Categorieses');
+  it('leaves a conventionally plural resource name alone', () => {
+    expect(defineResource({ name: 'users', table }).labels.plural).toBe('Users');
+    expect(defineResource({ name: 'categories', table }).labels.plural).toBe('Categories');
   });
 
   it('respects explicit labels', () => {

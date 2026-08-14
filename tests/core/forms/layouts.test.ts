@@ -135,6 +135,9 @@ describe('gridClassName', () => {
 
   it('omits breakpoints that were not given', () => {
     expect(gridClassName({ lg: 4 })).toBe('grid-cols-1 lg:grid-cols-4');
+    expect(gridClassName({ sm: 2 })).toBe('grid-cols-1 sm:grid-cols-2');
+    expect(gridClassName({ md: 3 })).toBe('grid-cols-1 md:grid-cols-3');
+    expect(gridClassName({})).toBe('grid-cols-1');
   });
 });
 

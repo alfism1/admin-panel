@@ -9,8 +9,10 @@ dist-ssr
 .idea
 *.tsbuildinfo
 
-# Local SQLite databases created by `pnpm db:seed`
-data/
+# Local SQLite databases created by `pnpm db:seed`.
+# Anchored: an unanchored `data/` matches at every depth and silently excluded
+# `src/core/data/` — the whole data layer — from version control.
+/data/
 
 # Generated knowledge-graph artifacts
 graphify-out/

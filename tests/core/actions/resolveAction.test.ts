@@ -6,6 +6,7 @@ import { DeleteBulkAction } from '@/core/actions/BulkAction';
 import { EditAction } from '@/core/actions/EditAction';
 import { ViewAction } from '@/core/actions/ViewAction';
 import { resolveBuiltin } from '@/core/actions/resolveAction';
+import type { BuiltinAction } from '@/core/actions/types';
 import { defineResource } from '@/core/resources/Resource';
 import { TextColumn } from '@/core/tables/columns/TextColumn';
 
@@ -128,5 +129,42 @@ describe('a resource without permissions', () => {
     expect(resolveBuiltin(EditAction.make().definition, open, { id: 1 }).href).toBe(
       '/notes/1/edit',
     );
+  });
+});
+
+describe('forward compatibility', () => {
+  it('resolves an unrecognised builtin to nothing rather than throwing', () => {
+    const config = { ...Action.make('mystery').definition, builtin: 'archive' as BuiltinAction };
+
+    expect(resolveBuiltin(config, resource, record)).toEqual({});
+  });
+});
+
+describe('a row action rendered without a record', () => {
+  it('leaves the view href undefined', () => {
+    expect(resolveBuiltin(ViewAction.make().definition, resource, null).href).toBeUndefined();
+  });
+
+  it('leaves the edit href undefined', () => {
+    expect(resolveBuiltin(EditAction.make().definition, resource, null).href).toBeUndefined();
+  });
+});
+
+describe('a bulk delete with no explicit confirmation', () => {
+  it('still generates its own copy', () => {
+    const config = { ...DeleteBulkAction.make().definition, confirmation: undefined };
+
+    expect(resolveBuiltin(config, resource, null).confirmation).toMatchObject({
+      heading: 'Delete the selected posts?',
+      confirmLabel: 'Delete',
+    });
+  });
+
+  it('generates delete copy without an explicit confirmation too', () => {
+    const config = { ...DeleteAction.make().definition, confirmation: undefined };
+
+    expect(resolveBuiltin(config, resource, record).confirmation).toMatchObject({
+      heading: 'Delete this post?',
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Action } from '@/core/actions/Action';
@@ -13,6 +13,7 @@ import { TextInput } from '@/core/forms/fields/TextInput';
 import { defineResource } from '@/core/resources/Resource';
 import { ResourceProvider } from '@/core/resources/ResourceContext';
 import { TextColumn } from '@/core/tables/columns/TextColumn';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/core/ui/dropdown-menu';
 import { TooltipProvider } from '@/core/ui/tooltip';
 import { makeUser } from '../../helpers/context';
 import { renderWithProviders } from '../../helpers/render';
@@ -61,19 +62,34 @@ function renderAction(
     withResource?: boolean;
     user?: ReturnType<typeof makeUser> | null;
     onCompleted?: () => void;
+    variant?: 'button' | 'menuItem';
   } = {},
 ) {
-  const { withResource = true, user = makeUser(), ...rest } = options;
+  const { withResource = true, user = makeUser(), variant = 'button', ...rest } = options;
   const refresh = vi.fn();
+
+  const renderer = (
+    <ActionRenderer
+      action={action}
+      record={rest.record ?? null}
+      records={rest.records ?? []}
+      variant={variant}
+      onCompleted={rest.onCompleted}
+    />
+  );
 
   const tree = (
     <TooltipProvider>
-      <ActionRenderer
-        action={action}
-        record={rest.record ?? null}
-        records={rest.records ?? []}
-        onCompleted={rest.onCompleted}
-      />
+      {variant === 'menuItem' ? (
+        // A menu item needs a menu around it. `modal={false}` keeps the rest of
+        // the document reachable, so the dialogs it opens stay queryable.
+        <DropdownMenu open modal={false}>
+          <DropdownMenuTrigger>Row actions</DropdownMenuTrigger>
+          <DropdownMenuContent>{renderer}</DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        renderer
+      )}
     </TooltipProvider>
   );
 
@@ -342,15 +358,23 @@ describe('built-in delete', () => {
    * honouring `confirmation: false`. Then flip these assertions to the copy
    * asserted in tests/core/actions/resolveAction.test.ts.
    */
-  it('KNOWN BUG: shows generic copy instead of the resolved per-record copy', async () => {
+  it('shows the resource-aware copy resolveBuiltin generated', async () => {
     renderAction(DeleteAction.make(), { record });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     const dialog = await screen.findByRole('alertdialog');
 
-    expect(dialog).toHaveTextContent('Delete?');
-    expect(dialog).toHaveTextContent('This action cannot be undone.');
-    expect(dialog).not.toHaveTextContent('Hello world');
+    expect(dialog).toHaveTextContent('Delete this post?');
+    expect(dialog).toHaveTextContent('"Hello world" will be permanently removed.');
+  });
+
+  it('honours an explicit opt-out of confirmation on a built-in', async () => {
+    renderAction(DeleteAction.make().requiresConfirmation(false), { record });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(provider.delete).toHaveBeenCalled());
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('an explicit confirmation on the built-in does reach the dialog', async () => {
@@ -427,5 +451,214 @@ describe('outside a resource', () => {
     renderAction(ViewAction.make(), { record, withResource: false });
 
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+});
+
+describe('menu item variant', () => {
+  it('renders a navigation action as a menu link', () => {
+    renderAction(ViewAction.make(), { record, variant: 'menuItem' });
+
+    expect(screen.getByRole('menuitem', { name: 'View' })).toHaveAttribute('href', '/posts/7');
+  });
+
+  it('opens a custom url in a new tab from the menu', () => {
+    const action = Action.make('docs').url(() => 'https://example.com', { openInNewTab: true });
+    renderAction(action, { record, variant: 'menuItem' });
+
+    expect(screen.getByRole('menuitem', { name: 'Docs' })).toHaveAttribute('target', '_blank');
+  });
+
+  it('runs a handler action straight from the menu', async () => {
+    const handler = vi.fn();
+    renderAction(Action.make('ping').action(handler), { record, variant: 'menuItem' });
+
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Ping' }));
+
+    await waitFor(() => expect(handler).toHaveBeenCalled());
+  });
+
+  it('confirms before running a destructive menu action', async () => {
+    renderAction(DeleteAction.make(), { record, variant: 'menuItem' });
+
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Delete this post?');
+  });
+
+  it('styles a destructive menu action', () => {
+    renderAction(DeleteAction.make(), { record, variant: 'menuItem' });
+
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveClass('text-destructive');
+  });
+
+  it('disables a menu item the action marks disabled', () => {
+    const action = Action.make('ping').action(vi.fn()).disabled(true);
+    renderAction(action, { record, variant: 'menuItem' });
+
+    expect(screen.getByRole('menuitem', { name: 'Ping' })).toHaveAttribute(
+      'data-disabled',
+      expect.anything() as unknown as string,
+    );
+  });
+
+  it('opens a modal form from the menu', async () => {
+    const action = Action.make('reject')
+      .action(vi.fn())
+      .form([TextInput.make('reason')]);
+    renderAction(action, { record, variant: 'menuItem' });
+
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Reject' }));
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+describe('a form action that also confirms', () => {
+  const build = () =>
+    Action.make('reject')
+      .action(vi.fn())
+      .form([TextInput.make('reason')])
+      .requiresConfirmation({ heading: 'Really reject?', description: 'The author is notified.' });
+
+  it('describes the confirmation inside the form modal', async () => {
+    renderAction(build(), { record });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('The author is notified.');
+  });
+
+  it('labels the form submit "Continue" rather than the action name', async () => {
+    renderAction(build(), { record });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    expect(await screen.findByRole('button', { name: 'Continue' })).toBeInTheDocument();
+  });
+
+  it('shows no description when the confirmation has none', async () => {
+    const action = Action.make('reject')
+      .action(vi.fn())
+      .form([TextInput.make('reason')])
+      .requiresConfirmation({ heading: 'Really reject?' });
+
+    renderAction(action, { record });
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).not.toHaveTextContent('undefined');
+  });
+
+  it('confirms after the form and passes the form data to the handler', async () => {
+    const handler = vi.fn();
+    const action = Action.make('reject')
+      .action(handler)
+      .form([TextInput.make('reason')])
+      .requiresConfirmation({ heading: 'Really reject?' });
+
+    renderAction(action, { record });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await userEvent.type(await screen.findByLabelText('Reason'), 'Not ready');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(handler).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() => expect(handler).toHaveBeenCalled());
+    expect(handler.mock.calls[0][0]).toMatchObject({ data: { reason: 'Not ready' } });
+  });
+
+  it('closes the form modal from its Cancel button', async () => {
+    renderAction(build(), { record });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('closes the form modal when the overlay dismisses it', async () => {
+    renderAction(build(), { record });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await screen.findByRole('dialog');
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+});
+
+describe('button sizing', () => {
+  it('honours an explicit size', () => {
+    renderAction(Action.make('ping').action(vi.fn()).size('lg'), { record });
+
+    expect(screen.getByRole('button', { name: 'Ping' })).toHaveClass('h-10');
+  });
+});
+
+describe('icon-only styling', () => {
+  it('falls back to the grey tone when no colour is set', () => {
+    renderAction(Action.make('ping').action(vi.fn()).icon('star').iconOnly(), { record });
+
+    expect(screen.getByRole('button', { name: 'Ping' })).toHaveClass('text-muted-foreground');
+  });
+
+  it('uses the action colour when one is set', () => {
+    renderAction(Action.make('ping').action(vi.fn()).icon('star').iconOnly().color('danger'), {
+      record,
+    });
+
+    expect(screen.getByRole('button', { name: 'Ping' })).toHaveClass('text-destructive');
+  });
+
+  it('falls back to the grey tone on an icon-only link', () => {
+    const action = Action.make('docs')
+      .url(() => '/docs')
+      .icon('link')
+      .iconOnly();
+    renderAction(action, { record });
+
+    expect(screen.getByRole('link', { name: 'Docs' })).toHaveClass('text-muted-foreground');
+  });
+
+  it('uses the action colour on an icon-only link', () => {
+    const action = Action.make('docs')
+      .url(() => '/docs')
+      .icon('link')
+      .iconOnly()
+      .color('success');
+    renderAction(action, { record });
+
+    expect(screen.getByRole('link', { name: 'Docs' })).toHaveClass('text-success');
+  });
+});
+
+describe('modal width', () => {
+  it('widens the form modal when asked', async () => {
+    const action = Action.make('reject')
+      .action(vi.fn())
+      .form([TextInput.make('reason')])
+      .modalWidth('2xl');
+
+    renderAction(action, { record });
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    expect(await screen.findByRole('dialog')).toHaveClass('sm:max-w-2xl');
+  });
+
+  it('defaults the form modal to a medium width', async () => {
+    const action = Action.make('reject')
+      .action(vi.fn())
+      .form([TextInput.make('reason')]);
+
+    renderAction(action, { record });
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    expect(await screen.findByRole('dialog')).toHaveClass('sm:max-w-md');
   });
 });

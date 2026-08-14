@@ -1,6 +1,7 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { apiClient } from '@/core/data/apiClient';
 import { FileUpload } from '@/core/forms/fields/FileUpload';
 import { SchemaForm } from '@/core/forms/SchemaForm';
 import type { FormComponent, FormValues } from '@/core/forms/types';
@@ -38,6 +39,30 @@ function file(name: string, type = 'image/png', sizeKb = 1): File {
 const input = () => screen.getByLabelText(/Cover|Gallery|Docs/, { selector: 'input[type="file"]' });
 
 const upload = vi.fn(async (picked: File) => `/uploads/${picked.name}`);
+
+// `notify` is a module mock, so its spies survive `restoreMocks` — a test that
+// asserts "no error was raised" needs a clean slate.
+beforeEach(() => {
+  vi.mocked(notify.error).mockClear();
+});
+
+const dropZone = () => screen.getByText(/Drop |Limit of /).closest('div') as HTMLElement;
+
+/** A minimal `DataTransfer` — jsdom ships none, and only `files` is read. */
+function transfer(files: unknown[]) {
+  const list = { length: files.length, item: (index: number) => files[index] ?? null };
+  files.forEach((entry, index) => Object.assign(list, { [index]: entry }));
+  return { dataTransfer: { files: list } };
+}
+
+/** Resolves on demand, so two uploads can be interleaved deliberately. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 describe('drop zone', () => {
   it('renders a browse affordance', () => {
@@ -101,6 +126,142 @@ describe('drop zone', () => {
     renderField([FileUpload.make('cover').disabled().uploadHandler(upload)]);
 
     expect(input()).toBeDisabled();
+  });
+
+  it('disables the input when the field is read-only', () => {
+    renderField([FileUpload.make('cover').readOnly().uploadHandler(upload)]);
+
+    expect(input()).toBeDisabled();
+  });
+
+  it('opens the file dialog from the browse button', async () => {
+    renderField([FileUpload.make('cover').uploadHandler(upload)]);
+
+    const click = vi.spyOn(input(), 'click');
+    await userEvent.click(screen.getByRole('button', { name: 'browse' }));
+
+    expect(click).toHaveBeenCalled();
+  });
+
+  it('disables the browse button while the field is disabled', () => {
+    renderField([FileUpload.make('cover').disabled().uploadHandler(upload)]);
+
+    expect(screen.getByRole('button', { name: 'browse' })).toBeDisabled();
+  });
+
+  it('marks the drop zone invalid when the field has an error', async () => {
+    renderField([FileUpload.make('cover').required().uploadHandler(upload)]);
+
+    await submit();
+
+    await waitFor(() => expect(dropZone()).toHaveClass('border-destructive'));
+  });
+});
+
+describe('drag and drop', () => {
+  it('highlights the zone while a file is dragged over it', () => {
+    renderField([FileUpload.make('cover').uploadHandler(upload)]);
+
+    fireEvent.dragOver(dropZone());
+    expect(dropZone()).toHaveClass('border-primary');
+
+    fireEvent.dragLeave(dropZone());
+    expect(dropZone()).not.toHaveClass('border-primary');
+  });
+
+  it('does not highlight a disabled zone', () => {
+    renderField([FileUpload.make('cover').disabled().uploadHandler(upload)]);
+
+    fireEvent.dragOver(dropZone());
+
+    expect(dropZone()).not.toHaveClass('border-primary');
+  });
+
+  it('does not highlight a zone that is already full', () => {
+    renderField([FileUpload.make('gallery').multiple().maxFiles(1).uploadHandler(upload)], {
+      gallery: ['/uploads/a.png'],
+    });
+
+    fireEvent.dragOver(dropZone());
+
+    expect(dropZone()).not.toHaveClass('border-primary');
+  });
+
+  it('uploads a dropped file', async () => {
+    const handler = vi.fn(async (picked: File) => `/uploads/${picked.name}`);
+    const { onSubmit } = renderField([FileUpload.make('cover').uploadHandler(handler)]);
+
+    fireEvent.drop(dropZone(), transfer([file('dropped.png')]));
+
+    await waitFor(() => expect(handler).toHaveBeenCalled());
+    await submit();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ cover: '/uploads/dropped.png' }));
+  });
+
+  it('clears the highlight after a drop', async () => {
+    renderField([FileUpload.make('cover').uploadHandler(upload)]);
+
+    fireEvent.dragOver(dropZone());
+    fireEvent.drop(dropZone(), transfer([file('dropped.png')]));
+
+    await waitFor(() => expect(dropZone()).not.toHaveClass('border-primary'));
+  });
+
+  it('ignores a drop onto a disabled zone', async () => {
+    const handler = vi.fn(async () => '/uploads/x.png');
+    renderField([FileUpload.make('cover').disabled().uploadHandler(handler)]);
+
+    fireEvent.drop(dropZone(), transfer([file('dropped.png')]));
+
+    await waitFor(() => expect(dropZone()).not.toHaveClass('border-primary'));
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('ignores a drop with an empty file list', async () => {
+    const handler = vi.fn(async () => '/uploads/x.png');
+    renderField([FileUpload.make('cover').uploadHandler(handler)]);
+
+    fireEvent.drop(dropZone(), transfer([]));
+
+    await waitFor(() => expect(handler).not.toHaveBeenCalled());
+  });
+
+  it('tolerates a drop whose entry cannot be read as a file', async () => {
+    const handler = vi.fn(async () => '/uploads/x.png');
+    renderField([FileUpload.make('cover').uploadHandler(handler)]);
+
+    // A directory drop reports a length the browser cannot materialise into a
+    // `File`; the control must not read `undefined` as something to upload.
+    fireEvent.drop(dropZone(), transfer([undefined]));
+
+    await waitFor(() => expect(handler).not.toHaveBeenCalled());
+    expect(notify.error).not.toHaveBeenCalled();
+  });
+
+  it('refuses a drop once the file limit is reached', async () => {
+    const handler = vi.fn(async () => '/uploads/x.png');
+    renderField([FileUpload.make('gallery').multiple().maxFiles(1).uploadHandler(handler)], {
+      gallery: ['/uploads/a.png'],
+    });
+
+    // The browse input is disabled at capacity, but a drop still reaches the zone.
+    fireEvent.drop(dropZone(), transfer([file('b.png')]));
+
+    await waitFor(() =>
+      expect(notify.error).toHaveBeenCalledWith('Remove a file first — at most 1 allowed.'),
+    );
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('pluralises the remaining capacity', async () => {
+    const handler = vi.fn(async (picked: File) => `/uploads/${picked.name}`);
+    renderField([FileUpload.make('gallery').multiple().maxFiles(2).uploadHandler(handler)]);
+
+    fireEvent.drop(dropZone(), transfer([file('a.png'), file('b.png'), file('c.png')]));
+
+    await waitFor(() =>
+      expect(notify.error).toHaveBeenCalledWith('Only 2 more files can be added.'),
+    );
   });
 });
 
@@ -184,6 +345,101 @@ describe('uploading', () => {
     await userEvent.upload(input(), file('a.png'));
 
     await waitFor(() => expect(notify.error).toHaveBeenCalledWith('1 file failed to upload.'));
+  });
+
+  it('pluralises the failure count', async () => {
+    renderField([
+      FileUpload.make('gallery')
+        .multiple()
+        .uploadHandler(async () => {
+          throw new Error('Storage down');
+        }),
+    ]);
+
+    await userEvent.upload(input(), [file('a.png'), file('b.png')]);
+
+    await waitFor(() => expect(notify.error).toHaveBeenCalledWith('2 files failed to upload.'));
+  });
+
+  it('shows upload progress while files are in flight', async () => {
+    const gate = deferred<string>();
+    renderField([FileUpload.make('cover').uploadHandler(async () => gate.promise)]);
+
+    await userEvent.upload(input(), file('slow.png'));
+
+    expect(await screen.findByText('Uploading 1 of 1…')).toBeInTheDocument();
+    expect(input()).toBeDisabled();
+
+    gate.resolve('/uploads/slow.png');
+    await waitFor(() => expect(screen.queryByText(/Uploading/)).not.toBeInTheDocument());
+  });
+
+  it('ignores a second drop while an upload is still in flight', async () => {
+    const gate = deferred<string>();
+    const handler = vi.fn(async () => gate.promise);
+    renderField([FileUpload.make('gallery').multiple().uploadHandler(handler)]);
+
+    const zone = dropZone();
+    fireEvent.drop(zone, transfer([file('a.png')]));
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+
+    fireEvent.drop(zone, transfer([file('b.png')]));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    gate.resolve('/uploads/a.png');
+    await waitFor(() => expect(screen.queryByText(/Uploading/)).not.toBeInTheDocument());
+  });
+
+  it('counts progress up as each file lands', async () => {
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const handler = vi
+      .fn<(picked: File) => Promise<string>>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    renderField([FileUpload.make('gallery').multiple().uploadHandler(handler)]);
+
+    await userEvent.upload(input(), [file('a.png'), file('b.png')]);
+
+    expect(await screen.findByText('Uploading 1 of 2…')).toBeInTheDocument();
+
+    first.resolve('/uploads/a.png');
+    expect(await screen.findByText('Uploading 2 of 2…')).toBeInTheDocument();
+
+    second.resolve('/uploads/b.png');
+    await waitFor(() => expect(screen.queryByText(/Uploading/)).not.toBeInTheDocument());
+  });
+
+  it('posts to /uploads when no handler is configured', async () => {
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValue({ data: { url: '/uploads/photo.png' } });
+
+    const { onSubmit } = renderField([FileUpload.make('cover').directory('covers')]);
+
+    await userEvent.upload(input(), file('photo.png'));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/uploads', expect.any(FormData)));
+    const body = post.mock.calls[0]?.[1] as FormData;
+    expect(body.get('file')).toBeInstanceOf(File);
+    expect(body.get('directory')).toBe('covers');
+
+    await submit();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ cover: '/uploads/photo.png' }));
+  });
+
+  it('omits the directory when none is configured', async () => {
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValue({ data: { url: '/uploads/photo.png' } });
+
+    renderField([FileUpload.make('cover')]);
+
+    await userEvent.upload(input(), file('photo.png'));
+
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect((post.mock.calls[0]?.[1] as FormData).get('directory')).toBeNull();
   });
 
   it('keeps the successful uploads when one of several fails', async () => {

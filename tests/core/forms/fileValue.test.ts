@@ -149,6 +149,10 @@ describe('fileNameFromUrl', () => {
   it('handles a bare file name', () => {
     expect(fileNameFromUrl('report.pdf')).toBe('report.pdf');
   });
+
+  it('falls back to the whole url when there is no last segment', () => {
+    expect(fileNameFromUrl('https://cdn.example.com/')).toBe('https://cdn.example.com/');
+  });
 });
 
 describe('looksLikeImage', () => {

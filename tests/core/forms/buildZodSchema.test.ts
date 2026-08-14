@@ -334,6 +334,15 @@ describe('unique', () => {
     expect(issues.email).toHaveLength(1);
   });
 
+  it('ignores a returned row that does not actually hold the value', async () => {
+    // A backend that ignores the filter would otherwise turn every save into a
+    // false "already taken".
+    provider.getList.mockResolvedValue(listResult([{ id: 2 }, { id: 3, email: null }]));
+    const fields = [TextInput.make('email').unique({ resource: 'users' })];
+
+    expect(await validate(fields, { email: 'new@example.com' })).toEqual({});
+  });
+
   it('queries the configured column instead of the field name', async () => {
     provider.getList.mockResolvedValue(listResult([]));
     const fields = [TextInput.make('login').unique({ resource: 'users', column: 'email' })];

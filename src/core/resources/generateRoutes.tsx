@@ -7,12 +7,16 @@ import { ListPage } from './pages/ListPage';
 import { ViewPage } from './pages/ViewPage';
 import type { PageOverride, Resource } from './types';
 
+/**
+ * A disabled page never gets a route at all, so `false` is excluded here rather
+ * than guarded against — the caller's `if (pages.x)` is what rules it out, and
+ * the type keeps that contract honest.
+ */
 function renderPage(
-  override: PageOverride,
+  override: Exclude<PageOverride, false>,
   Fallback: React.ComponentType<{ resource: Resource }>,
   resource: Resource,
-): React.ReactElement | null {
-  if (override === false) return null;
+): React.ReactElement {
   if (override === true) return <Fallback resource={resource} />;
   const Custom = override;
   return <Custom />;

@@ -89,8 +89,16 @@ export function serializeDate(date: Date, config: DateValueConfig = {}): string 
   return pattern ? formatDate(date, pattern) : date.toISOString();
 }
 
-export function coerceDate(value: DateBound | null | undefined): Date | null {
-  return value === null || value === undefined ? null : parseDateValue(value);
+/**
+ * A bound is normally written in the same shape the field stores, so it is read
+ * with the field's own config — `.minDate('09:00')` on a `.timeOnly()` picker
+ * would otherwise parse to null and be dropped instead of enforced.
+ */
+export function coerceDate(
+  value: DateBound | null | undefined,
+  config: DateValueConfig = {},
+): Date | null {
+  return value === null || value === undefined ? null : parseDateValue(value, config);
 }
 
 /** Minutes since midnight — how time-only values are compared. */

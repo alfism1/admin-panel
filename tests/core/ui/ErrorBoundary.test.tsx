@@ -102,3 +102,29 @@ describe('<ErrorBoundary>', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
   });
 });
+
+describe('the way back to the dashboard', () => {
+  it('navigates to the root', async () => {
+    // `Location.assign` is non-configurable in jsdom, so the whole object has
+    // to be swapped rather than spied on.
+    const real = window.location;
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...real, assign },
+    });
+
+    try {
+      render(
+        <ErrorBoundary>
+          <Boom />
+        </ErrorBoundary>,
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Back to dashboard' }));
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: real });
+    }
+
+    expect(assign).toHaveBeenCalledWith('/');
+  });
+});

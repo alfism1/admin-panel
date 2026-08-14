@@ -1,5 +1,5 @@
 import { screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PageShell } from '@/core/ui/PageShell';
 import { renderWithProviders } from '../../helpers/render';
 
@@ -62,6 +62,32 @@ describe('<PageShell>', () => {
     );
 
     expect(document.title).toContain('Users');
+  });
+
+  it('suffixes the title with the configured app name', () => {
+    vi.stubEnv('VITE_APP_NAME', 'Acme Admin');
+
+    renderWithProviders(
+      <PageShell title="Users">
+        <p>Body</p>
+      </PageShell>,
+    );
+
+    expect(document.title).toBe('Users · Acme Admin');
+    vi.unstubAllEnvs();
+  });
+
+  it('falls back to a default app name', () => {
+    vi.stubEnv('VITE_APP_NAME', undefined);
+
+    renderWithProviders(
+      <PageShell title="Users">
+        <p>Body</p>
+      </PageShell>,
+    );
+
+    expect(document.title).toBe('Users · Admin Panel');
+    vi.unstubAllEnvs();
   });
 });
 

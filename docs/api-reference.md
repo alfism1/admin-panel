@@ -72,6 +72,8 @@ interface FieldContext {
 
 - `.relationship()` loads options through the data provider and resolves labels for values that are
   not on the current page.
+- `.searchable()` filters in the browser for static options, and searches server-side (debounced)
+  only when a `.relationship()` is attached and `.preload()` is off.
 - `.preload()` fetches the full list once instead of searching server-side — right for short lookup
   tables.
 - `.native()` renders a plain `<select>`; good for short static lists.
@@ -84,19 +86,19 @@ default; `.inline(false)` stacks them.
 
 ### `DatePicker`
 
-| Method                                | Description                                                                        |
-| ------------------------------------- | ---------------------------------------------------------------------------------- |
-| `.time(boolean?)`                     | Adds a time input below the calendar.                                              |
-| `.seconds(boolean?)`                  | Widens the stored and displayed patterns to seconds; implies `.time()`.            |
-| `.timeOnly(boolean?)`                 | Time-of-day picker with no calendar — Filament's `TimePicker`.                     |
-| `.minutesStep(n)`                     | Granularity of the time input, in minutes.                                         |
-| `.displayFormat(fmt)`                 | `date-fns` pattern shown to the user.                                              |
-| `.format(pattern)`                    | `date-fns` pattern the value is **stored** as. Default: ISO 8601.                  |
-| `.minDate(bound)` / `.maxDate(bound)` | `Date`, ISO string, epoch, or a `(ctx) => …` resolver. Enforced in validation too. |
-| `.disabledDates(bounds \| Resolver)`  | Individual days to block.                                                          |
-| `.weekStartsOn(0–6)`                  | First column of the calendar. `0` is Sunday.                                       |
-| `.closeOnDateSelection(boolean?)`     | Default: close on pick, unless `.time()` is on.                                    |
-| `.native(boolean?)`                   | Renders the browser's date input instead of the calendar popover.                  |
+| Method                                | Description                                                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.time(boolean?)`                     | Adds a time input below the calendar.                                                                                                                                                |
+| `.seconds(boolean?)`                  | Widens the stored and displayed patterns to seconds; implies `.time()`.                                                                                                              |
+| `.timeOnly(boolean?)`                 | Time-of-day picker with no calendar — Filament's `TimePicker`.                                                                                                                       |
+| `.minutesStep(n)`                     | Granularity of the time input, in minutes.                                                                                                                                           |
+| `.displayFormat(fmt)`                 | `date-fns` pattern shown to the user.                                                                                                                                                |
+| `.format(pattern)`                    | `date-fns` pattern the value is **stored** as. Default: ISO 8601.                                                                                                                    |
+| `.minDate(bound)` / `.maxDate(bound)` | `Date`, epoch, an ISO string, or a string in the field's own `.format()` — `'09:00'` on a `.timeOnly()` picker. Also accepts a `(ctx) => …` resolver, and is enforced in validation. |
+| `.disabledDates(bounds \| Resolver)`  | Individual days to block.                                                                                                                                                            |
+| `.weekStartsOn(0–6)`                  | First column of the calendar. `0` is Sunday.                                                                                                                                         |
+| `.closeOnDateSelection(boolean?)`     | Default: close on pick, unless `.time()` is on.                                                                                                                                      |
+| `.native(boolean?)`                   | Renders the browser's date input instead of the calendar popover.                                                                                                                    |
 
 - **Storage.** ISO 8601 by default, which is right for a `timestamp` column. For a bare `date` or
   `time` column use `.format('yyyy-MM-dd')` / `.format('HH:mm')` — an ISO instant carries a timezone
@@ -247,19 +249,19 @@ error states and the responsive card view are all automatic.
 
 ## Actions
 
-| Method                                                                                  | Description                                                               |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `.label(string \| (record) => string)`                                                  | Button label.                                                             |
-| `.icon(name \| LucideIcon)`                                                             | Registry key or any Lucide component.                                     |
-| `.iconOnly(boolean?)`                                                                   | Renders as a tinted icon button with a tooltip.                           |
-| `.color(tone)` / `.size('sm'\|'md'\|'lg')` / `.tooltip(s)`                              | Presentation.                                                             |
-| `.requiresConfirmation({ heading?, description?, confirmLabel?, cancelLabel?, icon? })` | Confirmation dialog.                                                      |
-| `.form(schema)`                                                                         | Opens a modal built from a form schema; the result arrives as `ctx.data`. |
-| `.modalWidth('sm'\|'md'\|'lg'\|'xl'\|'2xl')`                                            | Modal size.                                                               |
-| `.action(async (ctx) => …)`                                                             | The handler.                                                              |
-| `.url((record) => string, { openInNewTab? })`                                           | Navigation instead of a handler.                                          |
-| `.visible(...)` / `.disabled(...)` / `.authorize(...)`                                  | Gating.                                                                   |
-| `.successNotification(string \| false)` / `.failureNotification(string \| false)`       | Toast control.                                                            |
+| Method                                                                                           | Description                                                                                                                         |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `.label(string \| (record) => string)`                                                           | Button label.                                                                                                                       |
+| `.icon(name \| LucideIcon)`                                                                      | Registry key or any Lucide component.                                                                                               |
+| `.iconOnly(boolean?)`                                                                            | Renders as a tinted icon button with a tooltip.                                                                                     |
+| `.color(tone)` / `.size('sm'\|'md'\|'lg')` / `.tooltip(s)`                                       | Presentation.                                                                                                                       |
+| `.requiresConfirmation({ heading?, description?, confirmLabel?, cancelLabel?, icon? } \| false)` | Confirmation dialog. Built-ins generate resource-aware copy; anything you pass overrides that field, and `false` opts out entirely. |
+| `.form(schema)`                                                                                  | Opens a modal built from a form schema; the result arrives as `ctx.data`.                                                           |
+| `.modalWidth('sm'\|'md'\|'lg'\|'xl'\|'2xl')`                                                     | Modal size.                                                                                                                         |
+| `.action(async (ctx) => …)`                                                                      | The handler.                                                                                                                        |
+| `.url((record) => string, { openInNewTab? })`                                                    | Navigation instead of a handler.                                                                                                    |
+| `.visible(...)` / `.disabled(...)` / `.authorize(...)`                                           | Gating.                                                                                                                             |
+| `.successNotification(string \| false)` / `.failureNotification(string \| false)`                | Toast control.                                                                                                                      |
 
 ```ts
 interface ActionContext {
@@ -290,7 +292,7 @@ defineResource({
   model?: 'User',
   route?: '/users',           // defaults to `/${name}`
   navigation?: { label?, icon?, group?, sort?, badge? } | false,
-  labels?: { singular?, plural? },
+  labels?: { singular?, plural? }, // derived from `name` when omitted: `users` -> User / Users
   recordTitleKey?: 'name',    // breadcrumbs and delete confirmations
   permissions?: { viewAny?, view?, create?, update?, delete? },
   form?: FormComponent[],

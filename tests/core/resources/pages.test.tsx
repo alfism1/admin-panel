@@ -11,6 +11,8 @@ import { EditPage } from '@/core/resources/pages/EditPage';
 import { ListPage } from '@/core/resources/pages/ListPage';
 import { ViewPage } from '@/core/resources/pages/ViewPage';
 import { defineResource } from '@/core/resources/Resource';
+import type { ResourceDefinition } from '@/core/resources/types';
+import { useResource, useResourceContext } from '@/core/resources/ResourceContext';
 import { BadgeColumn } from '@/core/tables/columns/BadgeColumn';
 import { TextColumn } from '@/core/tables/columns/TextColumn';
 import { TooltipProvider } from '@/core/ui/tooltip';
@@ -29,7 +31,8 @@ vi.mock('@/core/ui/notify', () => ({
 
 const { notify } = await import('@/core/ui/notify');
 
-const resource = defineResource({
+/** Kept as the raw config so variants can be spun off it. */
+const definition = {
   name: 'posts',
   labels: { singular: 'Post', plural: 'Posts' },
   recordTitleKey: 'title',
@@ -44,7 +47,9 @@ const resource = defineResource({
   table: {
     columns: [TextColumn.make('title').sortable(), BadgeColumn.make('status')],
   },
-});
+} satisfies ResourceDefinition;
+
+const resource = defineResource(definition);
 
 const record = { id: 7, title: 'Hello world', status: 'draft', excerpt: 'A summary' };
 
@@ -421,5 +426,200 @@ describe('<ViewPage>', () => {
     render();
 
     expect(await screen.findByText('Could not load this table')).toBeInTheDocument();
+  });
+});
+
+/**
+ * `ResourceProvider.refresh` is only reachable from inside a page's own subtree,
+ * so it is driven through the documented escape hatch: a custom cell / control.
+ */
+function RefreshProbe() {
+  const context = useResourceContext();
+  const current = useResource();
+
+  return (
+    <button type="button" onClick={() => context?.refresh()}>
+      Refresh {current.name}
+    </button>
+  );
+}
+
+describe('page-level refresh', () => {
+  // `SchemaTable` renders the desktop table and the mobile cards at once, so a
+  // custom cell appears twice; either copy proves the wiring.
+  const clickRefresh = async () => {
+    await screen.findAllByRole('button', { name: 'Refresh posts' });
+    await userEvent.click(screen.getAllByRole('button', { name: 'Refresh posts' })[0]);
+  };
+
+  it('<ListPage> invalidates the list queries', async () => {
+    const withProbe = defineResource({
+      ...definition,
+      table: { columns: [TextColumn.make('title').customComponent(RefreshProbe)] },
+    });
+
+    const { queryClient } = renderPage(<ListPage resource={withProbe} />);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await clickRefresh();
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', 'list'] });
+  });
+
+  it('<CreatePage> invalidates the list queries', async () => {
+    const withProbe = defineResource({
+      ...definition,
+      form: [TextInput.make('title').customComponent(RefreshProbe)],
+    });
+
+    const { queryClient } = renderPage(<CreatePage resource={withProbe} />, {
+      path: '/posts/create',
+      route: '/posts/create',
+    });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await clickRefresh();
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', 'list'] });
+  });
+
+  it('<EditPage> invalidates this record and the list', async () => {
+    const withProbe = defineResource({
+      ...definition,
+      form: [TextInput.make('title').customComponent(RefreshProbe)],
+    });
+
+    const { queryClient } = renderPage(<EditPage resource={withProbe} />, {
+      path: '/posts/:id/edit',
+      route: '/posts/7/edit',
+    });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await clickRefresh();
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', 'detail', '7'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', 'list'] });
+  });
+
+  it('<EditPage> falls back to a blank id on a route that carries none', async () => {
+    const withProbe = defineResource({
+      ...definition,
+      form: [TextInput.make('title').customComponent(RefreshProbe)],
+    });
+
+    const { queryClient } = renderPage(<EditPage resource={withProbe} />, {
+      path: '/posts/edit',
+      route: '/posts/edit',
+    });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await clickRefresh();
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', 'detail', ''] });
+  });
+
+  it('<ViewPage> falls back to a blank id on a route that carries none', async () => {
+    const withProbe = defineResource({
+      ...definition,
+      infolist: [TextColumn.make('title').customComponent(RefreshProbe)],
+    });
+
+    const { queryClient } = renderPage(<ViewPage resource={withProbe} />, {
+      path: '/posts/detail',
+      route: '/posts/detail',
+    });
+
+    // With no id the fetch is disabled, so the record can only come from the
+    // cache — under the same blank-id key the page invalidates.
+    queryClient.setQueryData(['posts', 'detail', ''], record);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await clickRefresh();
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', 'detail', ''] });
+  });
+
+  it('<ViewPage> invalidates this record', async () => {
+    const withProbe = defineResource({
+      ...definition,
+      infolist: [TextColumn.make('title').customComponent(RefreshProbe)],
+    });
+
+    const { queryClient } = renderPage(<ViewPage resource={withProbe} />, {
+      path: '/posts/:id',
+      route: '/posts/7',
+    });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await clickRefresh();
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', 'detail', '7'] });
+  });
+});
+
+describe('a resource with no form and no view page', () => {
+  const bare = defineResource({
+    name: 'tags',
+    labels: { singular: 'Tag', plural: 'Tags' },
+    recordTitleKey: 'title',
+    pages: { view: false },
+    table: { columns: [TextColumn.make('title')] },
+  });
+
+  it('<CreatePage> renders an empty form rather than crashing', () => {
+    renderPage(<CreatePage resource={bare} />, { path: '/tags/create', route: '/tags/create' });
+
+    expect(screen.getByRole('heading', { name: 'New tag' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Create tag/ })).toBeInTheDocument();
+  });
+
+  it('<EditPage> renders an empty form rather than crashing', async () => {
+    renderPage(<EditPage resource={bare} />, { path: '/tags/:id/edit', route: '/tags/7/edit' });
+
+    expect(await screen.findByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+  });
+
+  it('<EditPage> offers no view action when the view page is disabled', async () => {
+    renderPage(<EditPage resource={bare} />, { path: '/tags/:id/edit', route: '/tags/7/edit' });
+
+    await screen.findByRole('button', { name: 'Delete' });
+    expect(screen.queryByRole('link', { name: 'View' })).not.toBeInTheDocument();
+  });
+});
+
+describe('leaving the edit form', () => {
+  it('cancel returns to the list', async () => {
+    renderPage(<EditPage resource={resource} />, {
+      path: '/posts/:id/edit',
+      route: '/posts/7/edit',
+    });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByRole('heading', { name: 'Posts list' })).toBeInTheDocument();
+  });
+});
+
+describe('<ViewPage> error recovery', () => {
+  it('retries the fetch from the error state', async () => {
+    provider.getOne.mockRejectedValueOnce(new Error('Boom'));
+    provider.getOne.mockResolvedValue(record);
+
+    renderPage(<ViewPage resource={resource} />, { path: '/posts/:id', route: '/posts/7' });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.getAllByText('Hello world').length).toBeGreaterThan(1));
+  });
+
+  it('falls back to a derived label for a column with a blank one', async () => {
+    const unlabelled = defineResource({
+      ...definition,
+      infolist: [TextColumn.make('published_at').label('')],
+    });
+
+    renderPage(<ViewPage resource={unlabelled} />, { path: '/posts/:id', route: '/posts/7' });
+
+    expect(await screen.findByText('Published At')).toBeInTheDocument();
   });
 });

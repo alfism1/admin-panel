@@ -5,7 +5,9 @@ const ACRONYMS = new Set(['id', 'url', 'api', 'ip', 'sku', 'seo', 'html', 'pdf',
  * `first_name` -> `First Name`, `role.name` -> `Name`, `user_id` -> `User`.
  */
 export function labelize(name: string): string {
-  const leaf = name.split('.').pop() ?? name;
+  // `split` always yields at least one element, so the last one is the leaf.
+  const segments = name.split('.');
+  const leaf = segments[segments.length - 1];
 
   const words = leaf
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
@@ -38,8 +40,10 @@ export function singularize(value: string): string {
 
 export function pluralize(value: string): string {
   if (/y$/i.test(value) && !/[aeiou]y$/i.test(value)) return value.replace(/y$/i, 'ies');
-  if (/(s|sh|ch|x|z)$/i.test(value)) return `${value}es`;
+  // Resource names are plural by convention, so an already-plural word has to
+  // pass through before the sibilant rule can append a second `es`.
   if (/s$/i.test(value)) return value;
+  if (/(sh|ch|x|z)$/i.test(value)) return `${value}es`;
   return `${value}s`;
 }
 

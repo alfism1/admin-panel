@@ -143,6 +143,23 @@ describe('bootstrap', () => {
 
     await waitFor(() => expect(authStore.getState().user).toBeNull());
   });
+
+  it('does not clear a fresh session when a late failure lands after unmount', async () => {
+    let reject: (reason: unknown) => void = () => undefined;
+    get.mockReturnValue(new Promise((_resolve, r) => (reject = r)) as never);
+
+    const { unmount } = renderProvider();
+    unmount();
+
+    // A second sign-in beat the abandoned bootstrap to the store; the failure
+    // must not wipe it out on its way past.
+    authStore.getState().setTokens('fresh', 'refresh-2');
+    authStore.getState().setUser(user);
+    reject(new Error('401'));
+
+    await waitFor(() => expect(authStore.getState().accessToken).toBe('fresh'));
+    expect(authStore.getState().user).not.toBeNull();
+  });
 });
 
 describe('permissions and roles', () => {

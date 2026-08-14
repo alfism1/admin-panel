@@ -302,3 +302,29 @@ describe('outside a resource', () => {
     expect(result.current.resource).toBeUndefined();
   });
 });
+
+describe('ctx.close', () => {
+  it('lets a handler dismiss the modal it was opened from', async () => {
+    const onDone = vi.fn();
+    const { result } = setup(
+      Action.make('publish').action((ctx) => {
+        ctx.close();
+      }),
+    );
+
+    await result.current.run(payload({ onDone }));
+
+    // Once from the handler, once from `onSuccess`.
+    expect(onDone).toHaveBeenCalledTimes(2);
+  });
+
+  it('is safe when no onDone was supplied', async () => {
+    const { result } = setup(
+      Action.make('publish').action((ctx) => {
+        ctx.close();
+      }),
+    );
+
+    await expect(result.current.run(payload())).resolves.toBeDefined();
+  });
+});

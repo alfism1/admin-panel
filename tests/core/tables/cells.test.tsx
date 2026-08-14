@@ -90,6 +90,21 @@ describe('<TextCell>', () => {
     expect(screen.getByText('Published')).toBeInTheDocument();
   });
 
+  it('defaults a badge to the grey tone', () => {
+    renderCell({ asBadge: true }, 'Published');
+    expect(screen.getByText('Published')).toHaveClass('bg-muted');
+  });
+
+  it('formats money in the ambient locale when none is given', () => {
+    renderCell({ money: { currency: 'USD' } }, 1234.5);
+    expect(screen.getByText('$1,234.50')).toBeInTheDocument();
+  });
+
+  it('treats a non-numeric decimal value as zero', () => {
+    renderCell({ numericDecimals: 2 }, 'abc');
+    expect(screen.getByText('0.00')).toBeInTheDocument();
+  });
+
   it('renders a description below the value', () => {
     renderCell({ description: { resolve: (row) => String(row.name), position: 'below' } }, 'x');
     expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
@@ -231,6 +246,32 @@ describe('<DateCell>', () => {
     renderCell({ relative: true }, recent);
     expect(screen.getByText(/ago$/)).toBeInTheDocument();
   });
+
+  it('reads an epoch number', () => {
+    renderCell({ format: 'yyyy-MM-dd' }, Date.UTC(2024, 2, 1, 12));
+    expect(screen.getByText(/2024-03-0[12]/)).toBeInTheDocument();
+  });
+
+  it('renders the fallback for an invalid Date object', () => {
+    renderCell({}, new Date('nonsense'));
+    expect(screen.getByText('—')).toBeInTheDocument();
+  });
+
+  it('formats in a configured timezone', () => {
+    renderCell({ timezone: 'UTC' }, '2024-03-01T23:30:00Z');
+
+    // Intl output varies by ICU build, so assert on the parts that do not.
+    const time = screen.getByText(/2024/);
+    expect(time).toHaveTextContent('11:30');
+    expect(time).toHaveTextContent('Mar 1, 2024');
+  });
+
+  it('prefers the relative form over a timezone', () => {
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    renderCell({ timezone: 'UTC', relative: true }, recent);
+
+    expect(screen.getByText(/ago$/)).toBeInTheDocument();
+  });
 });
 
 describe('<ImageCell>', () => {
@@ -286,5 +327,30 @@ describe('<ImageCell>', () => {
   it('applies the configured size', () => {
     const { container } = renderCell({ size: 48 }, '/a.png');
     expect(container.querySelector('img')).toHaveStyle({ width: '48px', height: '48px' });
+  });
+
+  it('rounds a circular image', () => {
+    const { container } = renderCell({ shape: 'circle' }, '/a.png');
+    expect(container.querySelector('img')).toHaveClass('rounded-full');
+  });
+
+  it('rounds a circular initials badge', () => {
+    renderCell({ shape: 'circle' }, null);
+    expect(screen.getByText('AL')).toHaveClass('rounded-full');
+  });
+
+  it('overlaps a stacked group', () => {
+    const { container } = renderCell({ stacked: true }, ['/a.png', '/b.png']);
+    expect(container.firstElementChild).toHaveClass('-space-x-2');
+  });
+
+  it('keeps an unstacked group apart', () => {
+    const { container } = renderCell({}, ['/a.png', '/b.png']);
+    expect(container.firstElementChild).not.toHaveClass('-space-x-2');
+  });
+
+  it('shows a question mark when the name yields no initials', () => {
+    renderCell({}, null, { id: 4, name: '  ' });
+    expect(screen.getByText('?')).toBeInTheDocument();
   });
 });

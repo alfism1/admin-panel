@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Checkbox } from '@/core/forms/fields/Checkbox';
@@ -108,6 +108,67 @@ describe('TextInputControl', () => {
     renderControl([TextInput.make('name')], { id: 1, name: null });
     expect(screen.getByLabelText('Name')).toHaveValue('');
   });
+
+  it('applies a letter mask', async () => {
+    renderControl([TextInput.make('code').mask('aa-99')]);
+
+    const input = screen.getByLabelText('Code');
+    await userEvent.type(input, 'ab12');
+
+    expect(input).toHaveValue('ab-12');
+  });
+
+  it('stops a letter mask once the letters run out', async () => {
+    renderControl([TextInput.make('code').mask('aaa')]);
+
+    const input = screen.getByLabelText('Code');
+    await userEvent.type(input, 'ab');
+
+    expect(input).toHaveValue('ab');
+  });
+
+  it('stops at a letter slot when only digits are left', () => {
+    renderControl([TextInput.make('code').mask('a-a')]);
+
+    const input = screen.getByLabelText('Code');
+    fireEvent.change(input, { target: { value: 'a1' } });
+
+    expect(input).toHaveValue('a-');
+  });
+
+  it('stops at a digit slot when only letters are left', () => {
+    renderControl([TextInput.make('code').mask('9-9')]);
+
+    const input = screen.getByLabelText('Code');
+    fireEvent.change(input, { target: { value: '1a' } });
+
+    expect(input).toHaveValue('1-');
+  });
+
+  it('pulls the next matching character out of order', () => {
+    renderControl([TextInput.make('code').mask('a9')]);
+
+    // Pasted in one go: typing would re-mask after every keystroke and drop the
+    // leading digit before the letter ever arrived.
+    const input = screen.getByLabelText('Code');
+    fireEvent.change(input, { target: { value: '1a' } });
+
+    expect(input).toHaveValue('a1');
+  });
+
+  it('carries a step through to a numeric input', () => {
+    renderControl([TextInput.make('price').numeric(0.5)]);
+
+    const input = screen.getByLabelText('Price');
+    expect(input).toHaveAttribute('type', 'number');
+    expect(input).toHaveAttribute('step', '0.5');
+  });
+
+  it('renders an arbitrary html input type', () => {
+    renderControl([TextInput.make('query').type('search')]);
+
+    expect(screen.getByLabelText('Query')).toHaveAttribute('type', 'search');
+  });
 });
 
 describe('TextareaControl', () => {
@@ -132,6 +193,49 @@ describe('TextareaControl', () => {
     await userEvent.type(screen.getByLabelText('Bio'), 'Hello there');
 
     expect(screen.getByLabelText('Bio')).toHaveValue('Hello there');
+  });
+
+  it('counts characters against the max length', async () => {
+    renderControl([Textarea.make('bio').maxLength(20)]);
+
+    expect(screen.getByText('0/20')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Bio'), 'Hello');
+
+    expect(screen.getByText('5/20')).toBeInTheDocument();
+  });
+
+  it('counts a null value as empty', () => {
+    renderControl([Textarea.make('bio').maxLength(20)], { id: 1, bio: null });
+
+    expect(screen.getByLabelText('Bio')).toHaveValue('');
+    expect(screen.getByText('0/20')).toBeInTheDocument();
+  });
+
+  it('grows to fit its content when autosized', async () => {
+    renderControl([Textarea.make('bio').autosize()]);
+
+    const textarea = screen.getByLabelText('Bio') as HTMLTextAreaElement;
+    expect(textarea).toHaveStyle({ resize: 'none', overflow: 'hidden' });
+    // jsdom reports a scrollHeight of 0, so the effect can only be observed by
+    // the height it writes back onto the element.
+    expect(textarea.style.height).toBe('0px');
+
+    await userEvent.type(textarea, 'Hello');
+    expect(textarea.style.height).toBe('0px');
+  });
+
+  it('leaves the height alone when not autosized', () => {
+    renderControl([Textarea.make('bio')]);
+
+    const textarea = screen.getByLabelText('Bio') as HTMLTextAreaElement;
+    expect(textarea.style.height).toBe('');
+    expect(textarea.style.resize).toBe('');
+  });
+
+  it('is disabled when the field is disabled', () => {
+    renderControl([Textarea.make('bio').disabled()]);
+    expect(screen.getByLabelText('Bio')).toBeDisabled();
   });
 });
 
@@ -170,6 +274,22 @@ describe('CheckboxControl', () => {
     renderControl([Checkbox.make('is_active').readOnly()]);
     expect(screen.getByRole('checkbox', { name: 'Is Active' })).toBeDisabled();
   });
+
+  it('applies the configured checked tone', () => {
+    renderControl([Checkbox.make('is_active').onColor('danger')]);
+
+    expect(screen.getByRole('checkbox', { name: 'Is Active' })).toHaveClass(
+      'data-[state=checked]:bg-destructive',
+    );
+  });
+
+  it('carries no tone class by default', () => {
+    renderControl([Checkbox.make('is_active')]);
+
+    expect(screen.getByRole('checkbox', { name: 'Is Active' }).className).not.toMatch(
+      /bg-(success|warning|destructive|muted-foreground)/,
+    );
+  });
 });
 
 describe('ToggleControl', () => {
@@ -190,5 +310,28 @@ describe('ToggleControl', () => {
   it('reflects a record value', () => {
     renderControl([Toggle.make('notify')], { id: 1, notify: true });
     expect(screen.getByRole('switch', { name: 'Notify' })).toBeChecked();
+  });
+
+  it('applies the on and off tones', () => {
+    renderControl([Toggle.make('notify').onColor('success').offColor('danger')]);
+
+    const toggle = screen.getByRole('switch', { name: 'Notify' });
+    expect(toggle).toHaveClass('data-[state=checked]:bg-success');
+    expect(toggle).toHaveClass('data-[state=unchecked]:bg-destructive/40');
+    // The border half of the checked tone is stripped: a switch has no border.
+    expect(toggle.className).not.toMatch(/border-success/);
+  });
+
+  it('carries no tone classes by default', () => {
+    renderControl([Toggle.make('notify')]);
+
+    expect(screen.getByRole('switch', { name: 'Notify' }).className).not.toMatch(
+      /bg-(success|warning|destructive)/,
+    );
+  });
+
+  it('is disabled when the field is read-only', () => {
+    renderControl([Toggle.make('notify').readOnly()]);
+    expect(screen.getByRole('switch', { name: 'Notify' })).toBeDisabled();
   });
 });

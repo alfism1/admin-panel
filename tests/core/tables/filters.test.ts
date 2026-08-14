@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { DateRangeFilter } from '@/core/tables/filters/DateRangeFilter';
+import { Filter } from '@/core/tables/filters/Filter';
 import { SelectFilter } from '@/core/tables/filters/SelectFilter';
 import { TernaryFilter } from '@/core/tables/filters/TernaryFilter';
+import type { FilterControl } from '@/core/tables/types';
 
 describe('filter basics', () => {
   it('is immutable across mutators', () => {
@@ -143,5 +145,36 @@ describe('DateRangeFilter', () => {
   it('describes an open-ended range', () => {
     expect(filter.describe('2024-01-01..')).toBe('after 2024-01-01');
     expect(filter.describe('..2024-01-31')).toBe('before 2024-01-31');
+  });
+});
+
+describe('a custom filter built on the base class', () => {
+  class TextFilter extends Filter {
+    static make(name: string): TextFilter {
+      return new TextFilter({ name });
+    }
+
+    get control(): FilterControl {
+      return (() => null) as unknown as FilterControl;
+    }
+  }
+
+  const filter = TextFilter.make('author');
+
+  it('inherits the base description, which is the raw value', () => {
+    expect(filter.describe('Ada')).toBe('Ada');
+  });
+
+  it('inherits the base emptiness rule', () => {
+    expect(filter.isEmpty('')).toBe(true);
+    expect(filter.isEmpty('Ada')).toBe(false);
+  });
+
+  it('inherits the base query mapping', () => {
+    expect(filter.toQuery('Ada')).toBe('Ada');
+  });
+
+  it('inherits the derived label', () => {
+    expect(filter.resolveLabel()).toBe('Author');
   });
 });

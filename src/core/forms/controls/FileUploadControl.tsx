@@ -131,6 +131,9 @@ export function FileUploadControl({
     const results = await Promise.allSettled(
       queue.map((file) =>
         upload(file, directory).finally(() =>
+          // Defensive: `busy` serialises batches, so the counter is always
+          // still up when a file lands.
+          /* v8 ignore next */
           setProgress((current) => (current ? { ...current, done: current.done + 1 } : current)),
         ),
       ),
@@ -157,6 +160,8 @@ export function FileUploadControl({
 
   const removeAt = async (index: number) => {
     const url = files[index];
+    // Defensive: the index comes from the same render that produced `files`.
+    /* v8 ignore next */
     if (url === undefined) return;
 
     if (deleteHandler) {
@@ -174,6 +179,8 @@ export function FileUploadControl({
 
   const move = (index: number, delta: number) => {
     const target = index + delta;
+    // Defensive: the buttons at either end of the list are disabled.
+    /* v8 ignore next */
     if (target < 0 || target >= files.length) return;
     const next = [...files];
     const [item] = next.splice(index, 1);

@@ -113,8 +113,9 @@ describe('actions', () => {
       renderBar({ actions: [DeleteBulkAction.make()] });
 
       await userEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
-      await screen.findByRole('alertdialog');
-      await userEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
+      const dialog = await screen.findByRole('alertdialog');
+      expect(dialog).toHaveTextContent('Delete the selected posts?');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
       await vi.waitFor(() => expect(provider.deleteMany).toHaveBeenCalledWith('posts', ['1', '2']));
     } finally {

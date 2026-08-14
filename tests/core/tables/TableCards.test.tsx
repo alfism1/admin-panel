@@ -150,3 +150,19 @@ describe('actions', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });
+
+describe('with no visible columns', () => {
+  it('renders a card per row and no cells', () => {
+    renderCards({ columns: [] });
+
+    const cards = screen.getAllByRole('listitem');
+    expect(cards).toHaveLength(rows.length);
+    expect(screen.queryByText('First post')).not.toBeInTheDocument();
+  });
+
+  it('still renders the row actions', () => {
+    renderCards({ columns: [], actions: [Action.make('ping').action(vi.fn())] });
+
+    expect(screen.getAllByRole('button', { name: 'Ping' })).toHaveLength(rows.length);
+  });
+});

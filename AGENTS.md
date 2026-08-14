@@ -80,7 +80,17 @@ Traps worth knowing before you write a new test:
 
 - Tests named `KNOWN BUG` / `KNOWN LIMITATION` pin behaviour that is wrong but currently shipped,
   with the fix written in the comment above them. Fixing the source means flipping the assertion in
-  the same commit — that is the point.
+  the same commit — that is the point. None are open right now; the convention stands for the next
+  one found.
+- Coverage is at 100% on every metric and `vitest.config.ts` enforces it. Code a test genuinely
+  cannot reach carries `/* v8 ignore next */` with the reason on the line above; reach for that only
+  after establishing that no public API can drive the branch.
+- `jsdom` sanitises an unparseable `<input type="date|time">` value to `''`, so the date control's
+  own guards are unreachable through `fireEvent.change`. Use `fireRawChange` from
+  `tests/helpers/events.ts`, which fakes what the change event reports for one dispatch.
+- Module-scope reads of `import.meta.env` (`API_URL`, `USE_MOCK`, `APP_NAME`) only change with
+  `vi.resetModules()` plus `vi.stubEnv`. Re-import `tests/helpers/render` in the same breath, or the
+  component under test will consume a different `AuthContext` than the wrapper provides.
 - Anything rendering a redirect (`<Navigate>`, `<ProtectedRoute>`) needs real `<Routes>` around it.
   Rendered bare, `<Navigate>` re-mounts on every location change and spins forever.
 - `restoreMocks: true` is on globally, so a module-scope `vi.spyOn` is dead after the first test.

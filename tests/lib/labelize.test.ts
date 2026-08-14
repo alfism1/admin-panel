@@ -88,23 +88,20 @@ describe('pluralize', () => {
   });
 
   /**
-   * KNOWN BUG — pinned so a fix is a deliberate, visible change.
-   *
-   * `pluralize` reads as though an already-plural word passes through
-   * untouched, but the `(s|sh|ch|x|z)$` branch matches every word ending in
-   * `s` and returns first, leaving the `/s$/ -> return value` guard below it
-   * unreachable. Resource names are plural by convention (`users`, `posts`),
-   * so any resource that omits `labels` gets "Userses" in its sidebar and
-   * page headings. Every resource in `src/resources/` sets `labels`
-   * explicitly today, which is why nothing visibly breaks.
-   *
-   * Fix: reorder so the `/s$/` early-return runs before the sibilant branch.
-   * Then flip these three assertions to `users` / `posts` / `boxes`.
+   * Resource names are plural by convention (`users`, `posts`), and a resource
+   * that omits `labels` derives its plural from the name — so an already-plural
+   * word has to survive the round trip untouched.
    */
-  it('does NOT round-trip an already-plural word (dead /s$/ branch)', () => {
-    expect(pluralize('users')).toBe('userses');
-    expect(pluralize('posts')).toBe('postses');
-    expect(pluralize('boxes')).toBe('boxeses');
+  it('round-trips an already-plural word', () => {
+    expect(pluralize('users')).toBe('users');
+    expect(pluralize('posts')).toBe('posts');
+    expect(pluralize('boxes')).toBe('boxes');
+  });
+
+  it('still appends -es to a singular sibilant', () => {
+    expect(pluralize('box')).toBe('boxes');
+    expect(pluralize('dish')).toBe('dishes');
+    expect(pluralize('batch')).toBe('batches');
   });
 });
 
