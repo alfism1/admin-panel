@@ -14,3 +14,6 @@ data/
 
 # Generated knowledge-graph artifacts
 graphify-out/
+
+# Test coverage reports
+coverage/

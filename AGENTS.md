@@ -29,6 +29,9 @@ pnpm dev:api      # API only, watch mode
 | Typecheck           | `pnpm typecheck`              |
 | Lint                | `pnpm lint` / `pnpm lint:fix` |
 | Format              | `pnpm format`                 |
+| Test                | `pnpm test`                   |
+| Test (watch)        | `pnpm test:watch`             |
+| Test with coverage  | `pnpm test:coverage`          |
 | Production build    | `pnpm build`                  |
 | Scaffold a resource | `pnpm gen:resource <Name>`    |
 | Inspect the DB      | `pnpm db:introspect`          |
@@ -39,9 +42,41 @@ pnpm dev:api      # API only, watch mode
 | New migration       | `pnpm db:migrate:make <name>` |
 | Migration status    | `pnpm db:migrate:status`      |
 
-**Before reporting any change complete, run `pnpm typecheck` and `pnpm lint`.** There is no test
-suite; the type checker is the safety net, so a clean `tsc -b` is the bar. Run `pnpm format` if you
-touched `src/`, `server/`, `scripts/` or `docs/`.
+**Before reporting any change complete, run `pnpm typecheck`, `pnpm lint` and `pnpm test`.** Run
+`pnpm format` if you touched `src/`, `server/`, `tests/`, `scripts/` or `docs/`. CI runs exactly
+these four plus `pnpm build` on every pull request into `master` — see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+## Tests
+
+Vitest + Testing Library, jsdom environment. Tests live in `tests/`, mirroring `src/`, so that
+`src/core/` stays a closed layer with no test files inside it. `tsconfig.test.json` puts them in the
+`tsc -b` graph, so a broken test is also a typecheck failure.
+
+```text
+tests/
+├── setup.ts        jsdom polyfills Radix and react-day-picker need
+├── helpers/        renderWithProviders (router + query + auth), makeFieldContext
+├── core/           mirrors src/core/
+├── pages/ · resources/ · lib/
+```
+
+What to reach for:
+
+- **Builders** (fields, columns, filters, actions) — assert on `.definition` and on the resolver
+  methods (`isVisible`, `isRequired`, `resolveLabel`). No rendering needed.
+- **Components** — `renderWithProviders` from `tests/helpers/render.tsx`; pass `user: null` for an
+  anonymous visitor, or `permissions: [...]` to test a gate.
+- **Resolver context** — `makeFieldContext({ values, operation, permissions })` builds a
+  `FieldContext` without standing up a form.
+
+Two conventions worth knowing:
+
+- A handful of tests are named `KNOWN BUG` / `KNOWN LIMITATION`. They pin behaviour that is wrong
+  but currently shipped, with the fix written in the comment above them. Fixing the source means
+  flipping the assertion in the same commit — that is the point.
+- Anything rendering a redirect (`<Navigate>`, `<ProtectedRoute>`) needs real `<Routes>` around it.
+  Rendered bare, `<Navigate>` re-mounts on every location change and spins forever.
 
 ## Repository layout
 
@@ -61,6 +96,7 @@ src/
 ├── layouts/        App shell, sidebar, auth layout
 └── lib/            Shared helpers (cn, debounce, path get/set, labelize)
 
+tests/              Vitest suite, mirroring src/ — see "Tests" above
 server/             Optional Node API: routes, auth, DB adapters, introspection
 └── migrations/     Timestamped schema migrations, applied by `pnpm db:migrate`
 docs/               Architecture, API reference, database guide, recipes
