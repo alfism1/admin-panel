@@ -33,6 +33,11 @@ pnpm dev:api      # API only, watch mode
 | Scaffold a resource | `pnpm gen:resource <Name>`    |
 | Inspect the DB      | `pnpm db:introspect`          |
 | Seed demo data      | `pnpm db:seed`                |
+| Seed N bulk rows    | `pnpm db:seed:bulk <rows>`    |
+| Benchmark queries   | `pnpm db:bench`               |
+| Run migrations      | `pnpm db:migrate`             |
+| New migration       | `pnpm db:migrate:make <name>` |
+| Migration status    | `pnpm db:migrate:status`      |
 
 **Before reporting any change complete, run `pnpm typecheck` and `pnpm lint`.** There is no test
 suite; the type checker is the safety net, so a clean `tsc -b` is the bar. Run `pnpm format` if you
@@ -57,6 +62,7 @@ src/
 └── lib/            Shared helpers (cn, debounce, path get/set, labelize)
 
 server/             Optional Node API: routes, auth, DB adapters, introspection
+└── migrations/     Timestamped schema migrations, applied by `pnpm db:migrate`
 docs/               Architecture, API reference, database guide, recipes
 scripts/            gen-resource.mjs scaffolder
 ```
@@ -75,6 +81,7 @@ Every customisation has a designed extension point outside `core`:
 | A new column type        | Subclass `Column`, or `.cell()` for a custom renderer |
 | Change data fetching     | Implement `DataProvider`, call `setDataProvider()`    |
 | Support another database | Implement `DatabaseAdapter` in `server/db/`           |
+| Change the DB schema     | Add a migration in `server/migrations/`               |
 | A custom page            | `src/pages/` + `registerNavigationItems()`            |
 
 See [`docs/recipes.md`](docs/recipes.md) for worked examples of each. If a task seems to require a
@@ -140,4 +147,5 @@ route is protected because the UI hides it.
 - [`docs/architecture.md`](docs/architecture.md) — the three contracts and which seam to touch
 - [`docs/api-reference.md`](docs/api-reference.md) — every field, column, filter and action method
 - [`docs/database.md`](docs/database.md) — connecting a real database
+- [`docs/performance.md`](docs/performance.md) — measured behaviour at 5M rows, and what still hurts
 - [`docs/recipes.md`](docs/recipes.md) — custom fields, columns, providers, pages

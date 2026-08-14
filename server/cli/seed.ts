@@ -1,12 +1,14 @@
 import bcrypt from 'bcryptjs';
 import type { Knex } from 'knex';
-import { createKnex, detectDialect } from '../db/connect';
+import { detectDialect } from '../db/connect';
+import { openMigrations, runLatest } from '../db/migrate';
 import { env } from '../env';
 
 /**
- * `pnpm db:seed` — creates the users / roles / posts tables the bundled example
- * resources expect, so a fresh database is usable immediately. Safe to re-run:
- * existing tables are left alone.
+ * `pnpm db:seed` — demo data for the bundled example resources. The tables
+ * themselves come from `server/migrations/`, which this runs first so a fresh
+ * database is usable in one command. Safe to re-run: tables that already have
+ * rows are left alone.
  */
 
 const FIRST = [
@@ -35,72 +37,20 @@ function daysAgo(days: number): Date {
   return new Date(Date.now() - days * 86_400_000);
 }
 
-async function createTables(db: Knex, isJsonNative: boolean): Promise<void> {
-  if (!(await db.schema.hasTable('roles'))) {
-    await db.schema.createTable('roles', (table) => {
-      table.increments('id').primary();
-      table.string('name', 60).notNullable();
-      table.string('slug', 60).notNullable().unique();
-      table.string('description', 160).defaultTo('');
-      if (isJsonNative) table.json('permissions');
-      else table.text('permissions');
-      table.timestamp('created_at').defaultTo(db.fn.now());
-    });
-    console.log('  + roles');
-  }
-
-  if (!(await db.schema.hasTable('users'))) {
-    await db.schema.createTable('users', (table) => {
-      table.increments('id').primary();
-      table.string('name', 255).notNullable();
-      table.string('email', 255).notNullable().unique();
-      table.string('password', 255).notNullable();
-      table.integer('role_id').references('id').inTable('roles');
-      table.boolean('is_active').defaultTo(true);
-      table.string('avatar', 500).nullable();
-      table.text('bio').defaultTo('');
-      table.timestamp('joined_at').nullable();
-      table.integer('orders_count').defaultTo(0);
-      table.timestamp('created_at').defaultTo(db.fn.now());
-      table.timestamp('updated_at').defaultTo(db.fn.now());
-    });
-    console.log('  + users');
-  }
-
-  if (!(await db.schema.hasTable('posts'))) {
-    await db.schema.createTable('posts', (table) => {
-      table.increments('id').primary();
-      table.string('title', 180).notNullable();
-      table.string('slug', 180).notNullable();
-      table.string('excerpt', 200).defaultTo('');
-      table.text('content').defaultTo('');
-      table.string('status', 20).defaultTo('draft');
-      table.boolean('is_featured').defaultTo(false);
-      table.integer('author_id').references('id').inTable('users');
-      table.string('category', 40).defaultTo('engineering');
-      table.string('cover', 500).nullable();
-      table.text('notes').defaultTo('');
-      table.timestamp('published_at').nullable();
-      table.integer('views').defaultTo(0);
-      table.timestamp('created_at').defaultTo(db.fn.now());
-      table.timestamp('updated_at').defaultTo(db.fn.now());
-    });
-    console.log('  + posts');
-  }
-}
-
-async function seedRows(db: Knex, isJsonNative: boolean): Promise<void> {
-  const encode = (value: string[]) =>
-    isJsonNative ? JSON.stringify(value) : JSON.stringify(value);
-
+async function seedRows(db: Knex): Promise<void> {
   if ((await db('roles').count({ total: '*' }).first())?.total == 0) {
     await db('roles').insert([
-      { name: 'Admin', slug: 'admin', description: 'Full access.', permissions: encode(['*']) },
+      {
+        name: 'Admin',
+        slug: 'admin',
+        description: 'Full access.',
+        permissions: JSON.stringify(['*']),
+      },
       {
         name: 'Editor',
         slug: 'editor',
         description: 'Manages content.',
-        permissions: encode([
+        permissions: JSON.stringify([
           'post.view',
           'post.create',
           'post.update',
@@ -114,7 +64,7 @@ async function seedRows(db: Knex, isJsonNative: boolean): Promise<void> {
         name: 'Viewer',
         slug: 'viewer',
         description: 'Read-only.',
-        permissions: encode(['user.view', 'post.view', 'role.view']),
+        permissions: JSON.stringify(['user.view', 'post.view', 'role.view']),
       },
     ]);
     console.log('  · 3 roles');
@@ -194,22 +144,23 @@ async function seedRows(db: Knex, isJsonNative: boolean): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const url = env.databaseUrl;
-  const dialect = detectDialect(url);
-
-  if (dialect === 'mongodb') {
+  if (detectDialect(env.databaseUrl) === 'mongodb') {
     throw new Error('Seeding is SQL-only. For MongoDB, import your own documents.');
   }
 
-  const db = createKnex(url, dialect);
-  const isJsonNative = dialect === 'postgres' || dialect === 'mysql';
+  const session = openMigrations();
 
-  console.log(`\n  seeding ${dialect}`);
-  await createTables(db, isJsonNative);
-  await seedRows(db, isJsonNative);
-  console.log('\n  ✓ done — start the API with: pnpm dev:api\n');
+  try {
+    console.log(`\n  seeding ${session.dialect}`);
 
-  await db.destroy();
+    const { names } = await runLatest(session);
+    for (const name of names) console.log(`  ↑ ${name}`);
+
+    await seedRows(session.knex);
+    console.log('\n  ✓ done — start the API with: pnpm dev:api\n');
+  } finally {
+    await session.close();
+  }
 }
 
 main().catch((error: unknown) => {

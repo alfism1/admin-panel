@@ -141,9 +141,11 @@ server/                      ← optional API; only needed to talk to a real dat
 ├── db/
 │   ├── connect.ts           URL scheme → driver
 │   ├── introspect.ts        tables, columns, primary keys, foreign keys
+│   ├── migrate.ts           migration runner, lock and baseline handling
 │   ├── sqlAdapter.ts        PostgreSQL / MySQL / SQLite / SQL Server
 │   └── mongoAdapter.ts      MongoDB
-└── cli/                     db:introspect, db:seed
+├── migrations/              timestamped schema migrations
+└── cli/                     db:introspect, db:seed, db:migrate
 ```
 
 ### How the form builder works

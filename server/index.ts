@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { createAuth } from './auth';
 import { connectDatabase } from './db';
+import { ensureMigrationsCurrent } from './db/migrate';
 import { assertProductionSecrets, env } from './env';
 import { createRequestListener } from './http';
 import { createRouter } from './routes';
@@ -9,6 +10,10 @@ async function main(): Promise<void> {
   assertProductionSecrets();
 
   console.log('\n  admin-panel api');
+
+  // Before introspection: the schema read on boot has to be the migrated one.
+  await ensureMigrationsCurrent();
+
   const db = await connectDatabase();
   const auth = createAuth(db);
 

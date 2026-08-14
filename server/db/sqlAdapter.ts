@@ -12,6 +12,20 @@ import {
 
 const MAX_PER_PAGE = 200;
 
+/**
+ * Unbounded text cast for the search predicate. A cast is needed because a
+ * `string` column can be a uuid, which `lower()` refuses — but it must not be
+ * length-bounded: `char(255)` truncates longer columns out of the match, and on
+ * PostgreSQL blank-pads every value to 255 chars, which cost 5x on a 5M-row scan.
+ */
+const TEXT_CAST: Record<Dialect, string> = {
+  postgres: 'text',
+  sqlite: 'text',
+  mysql: 'char',
+  mssql: 'varchar(max)',
+  mongodb: 'text',
+};
+
 function sanitize(row: Row): Row {
   const output: Row = {};
   for (const [key, value] of Object.entries(row)) {
@@ -70,9 +84,10 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
 
     if (params.search && schema.searchable.length > 0) {
       const needle = `%${params.search.toLowerCase()}%`;
+      const cast = TEXT_CAST[dialect];
       query.where((builder) => {
         for (const column of schema.searchable) {
-          builder.orWhereRaw('lower(cast(?? as char(255))) like ?', [column, needle]);
+          builder.orWhereRaw(`lower(cast(?? as ${cast})) like ?`, [column, needle]);
         }
       });
     }
@@ -142,19 +157,39 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
         total: number | string;
       }>;
 
-      const query = db(schema.name);
-      applyFilters(query, schema, params);
+      // A page past the end has no rows by definition, and the offset query to
+      // prove it costs a full index walk — `?page=500003` on 5M rows spent ~15 s
+      // to return nothing. The count already tells us where the data stops.
+      const lastPage = Math.max(1, Math.ceil(Number(total) / perPage));
+      if (page > lastPage) return { rows: [], total: Number(total) };
 
-      if (params.sort && hasColumn(schema, params.sort.column)) {
-        query.orderBy(params.sort.column, params.sort.direction);
-      } else {
-        query.orderBy(schema.primaryKey, 'desc');
-      }
+      const sortColumn =
+        params.sort && hasColumn(schema, params.sort.column)
+          ? params.sort.column
+          : schema.primaryKey;
+      const sortDirection =
+        params.sort && hasColumn(schema, params.sort.column) ? params.sort.direction : 'desc';
 
-      const rows = (await query
+      // Late row lookup: page over the primary key alone, then fetch the wide
+      // rows for the ids that survive. A plain `select * ... offset N` makes the
+      // planner heap-fetch every skipped row before discarding it; keeping the
+      // inner scan index-only took offset 2.5M from 19.5 s to 1.2 s.
+      const keys = db(schema.name);
+      applyFilters(keys, schema, params);
+      keys
+        .orderBy(sortColumn, sortDirection)
         .limit(perPage)
         .offset((page - 1) * perPage)
-        .select('*')) as Row[];
+        .select(schema.primaryKey);
+
+      const rows = (await db(schema.name)
+        .join(
+          keys.as('page_keys'),
+          `page_keys.${schema.primaryKey}`,
+          `${schema.name}.${schema.primaryKey}`,
+        )
+        .orderBy(`${schema.name}.${sortColumn}`, sortDirection)
+        .select(`${schema.name}.*`)) as Row[];
 
       return {
         rows: (await embedRelations(schema, rows)).map(sanitize),

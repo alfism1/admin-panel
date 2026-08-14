@@ -13,6 +13,12 @@ function required(name: string, hint: string): string {
   return value;
 }
 
+function flag(name: string): boolean {
+  return optional(name)?.toLowerCase() === 'true';
+}
+
+const migrationsTable = optional('DB_MIGRATIONS_TABLE') ?? 'knex_migrations';
+
 export const env = {
   get databaseUrl(): string {
     return required(
@@ -30,11 +36,24 @@ export const env = {
     .split(',')
     .map((name) => name.trim())
     .filter(Boolean),
-  hiddenTables: (optional('DB_HIDDEN_TABLES') ?? 'migrations,knex_migrations,knex_migrations_lock')
-    .split(',')
-    .map((name) => name.trim())
-    .filter(Boolean),
+  hiddenTables: [
+    ...(optional('DB_HIDDEN_TABLES') ?? 'migrations')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean),
+    // Bookkeeping is never a resource, whatever DB_HIDDEN_TABLES was set to.
+    migrationsTable,
+    `${migrationsTable}_lock`,
+  ],
   schema: optional('DB_SCHEMA'),
+
+  migrations: {
+    table: migrationsTable,
+    /** Apply pending migrations when the API boots. Off by default: a deliberate deploy step is safer. */
+    auto: flag('DB_AUTO_MIGRATE'),
+    /** Allows `db:migrate rollback` under NODE_ENV=production without --force. */
+    allowRollback: flag('DB_ALLOW_ROLLBACK'),
+  },
 
   auth: {
     table: optional('AUTH_TABLE') ?? 'users',

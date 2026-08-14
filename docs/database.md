@@ -88,19 +88,84 @@ No database installed? SQLite needs no server:
 
 ```bash
 echo 'DATABASE_URL=sqlite:./data/admin.db' >> .env
-pnpm db:seed        # creates users / roles / posts and seeds them
+pnpm db:seed        # migrates users / roles / posts, then seeds them
 pnpm dev:full
 ```
 
-`pnpm db:seed` is safe to re-run — it skips tables that already exist. It creates the schema the
-bundled example resources expect and seeds 30 users, 3 roles and 24 posts. Sign in with
+`pnpm db:seed` runs any pending migrations and then inserts demo rows — 30 users, 3 roles and 24
+posts. Safe to re-run: tables that already have rows are left alone. Sign in with
 `admin@example.com` / `password`.
+
+---
+
+## Migrations
+
+The tables live in `server/migrations/`, one timestamped file per change, applied in filename order
+and tracked in a `knex_migrations` table. SQL dialects only — MongoDB has no fixed schema to
+migrate.
+
+```bash
+pnpm db:migrate                  # apply everything pending
+pnpm db:migrate --dry            # list what would run, touch nothing
+pnpm db:migrate status           # what is applied, what is pending
+pnpm db:migrate:make add_tags    # write server/migrations/<timestamp>_add_tags.ts
+pnpm db:rollback                 # undo the last batch
+pnpm db:migrate down             # undo exactly one migration
+```
+
+A migration is a module with `up` and `down`, handed a Knex instance:
+
+```ts
+import type { Knex } from 'knex';
+
+export async function up(knex: Knex): Promise<void> {
+  await knex.schema.alterTable('posts', (table) => {
+    table.string('subtitle', 180).nullable();
+  });
+}
+
+export async function down(knex: Knex): Promise<void> {
+  await knex.schema.alterTable('posts', (table) => {
+    table.dropColumn('subtitle');
+  });
+}
+```
+
+Write the `down` even when you doubt you will use it — `rollback` is the only thing standing
+between a bad deploy and a restore from backup.
+
+### What runs where
+
+- **On boot** the API reports pending migrations and keeps going. Set `DB_AUTO_MIGRATE=true` to have
+  it apply them instead — convenient for a single-process deploy, but a separate `pnpm db:migrate`
+  step is safer once more than one instance can start at the same time.
+- **Concurrency** is handled by a lock table, so two runners cannot apply the same batch. If a
+  runner is killed mid-migration the lock survives it: clear it with `pnpm db:migrate unlock`.
+- **Transactions** wrap each migration on PostgreSQL, SQLite and SQL Server. MySQL and MariaDB
+  commit DDL implicitly, so a migration that fails halfway leaves the schema partly changed — the
+  CLI warns before it starts.
+- **In CI**, `pnpm db:migrate status --check` exits non-zero when anything is pending.
+- **Rolling back with `NODE_ENV=production`** is refused unless you pass `--force` or set
+  `DB_ALLOW_ROLLBACK=true`.
+
+### Adopting a database that already has the schema
+
+A database with no `knex_migrations` table is treated as one the panel does not own: nothing is
+created and nothing is reported. To bring it under migration control — a database built by an older
+`pnpm db:seed`, say — record the existing migrations as applied without running them:
+
+```bash
+pnpm db:migrate baseline
+```
+
+Only do that when the schema really does match; `baseline` asserts history rather than checking it.
 
 ---
 
 ## Pointing at a database you already have
 
-Nothing needs migrating. Tell the auth layer which columns you use:
+Nothing needs migrating — the runner leaves a database it did not create alone. Tell the auth layer
+which columns you use:
 
 ```bash
 AUTH_TABLE=accounts
@@ -158,6 +223,7 @@ DB_SCHEMA=public                             # PostgreSQL schema
 
 ```bash
 pnpm build          # builds the browser app into dist/
+pnpm db:migrate     # applies pending migrations — before the new API starts
 pnpm start:api      # runs the API
 ```
 
@@ -202,11 +268,13 @@ export interface DatabaseAdapter {
 
 ## Troubleshooting
 
-| Symptom                           | Cause                                                                 |
-| --------------------------------- | --------------------------------------------------------------------- |
-| `DATABASE_URL is not set`         | The server reads the root `.env`; copy `.env.example` first.          |
-| `resources (none found)`          | Wrong database in the URL, or `DB_TABLES` excludes everything.        |
-| Login says _no users table found_ | Set `AUTH_TABLE`, or `ADMIN_EMAIL` + `ADMIN_PASSWORD`.                |
-| Related column shows `—`          | No declared foreign key and the name is not `<table-singular>_id`.    |
-| App still shows fixture data      | `VITE_USE_MOCK` is still `true`; restart Vite after changing `.env`.  |
-| `EADDRINUSE`                      | Another process owns `API_PORT`; change it (Vite's proxy follows it). |
+| Symptom                             | Cause                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------- |
+| `DATABASE_URL is not set`           | The server reads the root `.env`; copy `.env.example` first.              |
+| `resources (none found)`            | Wrong database in the URL, or `DB_TABLES` excludes everything.            |
+| Login says _no users table found_   | Set `AUTH_TABLE`, or `ADMIN_EMAIL` + `ADMIN_PASSWORD`.                    |
+| Related column shows `—`            | No declared foreign key and the name is not `<table-singular>_id`.        |
+| App still shows fixture data        | `VITE_USE_MOCK` is still `true`; restart Vite after changing `.env`.      |
+| `EADDRINUSE`                        | Another process owns `API_PORT`; change it (Vite's proxy follows it).     |
+| `table … already exists` on migrate | The schema predates the runner; adopt it with `pnpm db:migrate baseline`. |
+| Migrations hang on the lock         | A runner was killed mid-batch; `pnpm db:migrate unlock`.                  |

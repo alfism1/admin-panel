@@ -17,7 +17,13 @@
     "dev:full": "concurrently -n web,api -c cyan,magenta \"pnpm dev\" \"pnpm dev:api\"",
     "start:api": "tsx server/index.ts",
     "db:introspect": "tsx server/cli/introspect.ts",
-    "db:seed": "tsx server/cli/seed.ts"
+    "db:seed": "tsx server/cli/seed.ts",
+    "db:seed:bulk": "tsx server/cli/seed-bulk.ts",
+    "db:bench": "tsx server/cli/bench.ts",
+    "db:migrate": "tsx server/cli/migrate.ts",
+    "db:migrate:make": "tsx server/cli/migrate.ts make",
+    "db:migrate:status": "tsx server/cli/migrate.ts status",
+    "db:rollback": "tsx server/cli/migrate.ts rollback"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

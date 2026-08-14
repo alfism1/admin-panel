@@ -96,10 +96,7 @@ async function registerInIndex(className) {
   if (source.includes(`${className}Resource`)) return false;
 
   const importLine = `import { ${className}Resource } from './${className}Resource';`;
-  const withImport = source.replace(
-    /(import \{ registerResources \}.*\n)/,
-    `$1${importLine}\n`,
-  );
+  const withImport = source.replace(/(import \{ registerResources \}.*\n)/, `$1${importLine}\n`);
 
   const withRegistration = withImport.replace(
     /registerResources\(\[([^\]]*)\]\)/,
@@ -130,10 +127,7 @@ async function main() {
     process.exit(1);
   }
 
-  await writeFile(
-    filePath,
-    template({ className, singular, plural, resourceKey, permissionKey }),
-  );
+  await writeFile(filePath, template({ className, singular, plural, resourceKey, permissionKey }));
   const registered = await registerInIndex(className);
 
   console.log(`✓ Created ${path.relative(process.cwd(), filePath)}`);
@@ -142,8 +136,12 @@ async function main() {
       ? `✓ Registered ${className}Resource in src/resources/index.ts`
       : `! Add ${className}Resource to src/resources/index.ts manually`,
   );
-  console.log(`\nRoutes now available: /${resourceKey}, /${resourceKey}/create, /${resourceKey}/:id, /${resourceKey}/:id/edit`);
-  console.log(`Permissions expected from the API: ${permissionKey}.view, .create, .update, .delete`);
+  console.log(
+    `\nRoutes now available: /${resourceKey}, /${resourceKey}/create, /${resourceKey}/:id, /${resourceKey}/:id/edit`,
+  );
+  console.log(
+    `Permissions expected from the API: ${permissionKey}.view, .create, .update, .delete`,
+  );
 }
 
 await main();
