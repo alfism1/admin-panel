@@ -84,16 +84,55 @@ default; `.inline(false)` stacks them.
 
 ### `DatePicker`
 
-`.time()` · `.minDate(Date)` · `.maxDate(Date)` · `.displayFormat(fmt)` · `.native(boolean?)`
+| Method                                | Description                                                                        |
+| ------------------------------------- | ---------------------------------------------------------------------------------- |
+| `.time(boolean?)`                     | Adds a time input below the calendar.                                              |
+| `.seconds(boolean?)`                  | Widens the stored and displayed patterns to seconds; implies `.time()`.            |
+| `.timeOnly(boolean?)`                 | Time-of-day picker with no calendar — Filament's `TimePicker`.                     |
+| `.minutesStep(n)`                     | Granularity of the time input, in minutes.                                         |
+| `.displayFormat(fmt)`                 | `date-fns` pattern shown to the user.                                              |
+| `.format(pattern)`                    | `date-fns` pattern the value is **stored** as. Default: ISO 8601.                  |
+| `.minDate(bound)` / `.maxDate(bound)` | `Date`, ISO string, epoch, or a `(ctx) => …` resolver. Enforced in validation too. |
+| `.disabledDates(bounds \| Resolver)`  | Individual days to block.                                                          |
+| `.weekStartsOn(0–6)`                  | First column of the calendar. `0` is Sunday.                                       |
+| `.closeOnDateSelection(boolean?)`     | Default: close on pick, unless `.time()` is on.                                    |
+| `.native(boolean?)`                   | Renders the browser's date input instead of the calendar popover.                  |
 
-Stores an ISO string. `displayFormat` uses `date-fns` tokens.
+- **Storage.** ISO 8601 by default, which is right for a `timestamp` column. For a bare `date` or
+  `time` column use `.format('yyyy-MM-dd')` / `.format('HH:mm')` — an ISO instant carries a timezone
+  that shifts the day for anyone west of Greenwich. Reading is tolerant either way, so records that
+  still hold a full timestamp keep working.
+- **Bounds** are compared at the granularity the picker offers: `.maxDate(new Date())` on a date-only
+  picker still allows today. Prefer the resolver form (`.maxDate(() => new Date())`) so "today" is
+  not frozen at import time.
+- `.default()` accepts a `Date` or epoch as well as the stored string form.
 
 ### `FileUpload`
 
-`.image()` · `.multiple()` · `.maxSize(kb)` · `.acceptedFileTypes([])` · `.directory(path)` ·
-`.uploadHandler(fn)`
+| Method                            | Description                                                        |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `.image(boolean?)`                | Accepts `image/*` and renders thumbnails.                          |
+| `.avatar(boolean?)`               | Single circular image preview.                                     |
+| `.multiple(boolean?)`             | Stores an array of URLs instead of one.                            |
+| `.acceptedFileTypes([])`          | MIME types, `type/*` wildcards, or `.ext` suffixes.                |
+| `.maxSize(kb)` / `.minSize(kb)`   | Per-file size bounds.                                              |
+| `.maxFiles(n)` / `.minFiles(n)`   | Count bounds. A positive `minFiles` also makes the field required. |
+| `.directory(path)`                | Sent alongside the file so the server can namespace it.            |
+| `.reorderable(boolean?)`          | Move-up / move-down controls on each item.                         |
+| `.downloadable()` / `.openable()` | Adds a download link / new-tab link to each item.                  |
+| `.previewable(boolean?)`          | `false` lists file names instead of thumbnails.                    |
+| `.imagePreviewHeight(px)`         | Fixed preview height.                                              |
+| `.panelLayout('grid' \| 'list')`  | Default: grid for previewable images, list otherwise.              |
+| `.uploadHandler(fn)`              | Replaces the default `POST /uploads` multipart request.            |
+| `.deleteFileUsing(fn)`            | Called when a file is removed, so storage can be cleaned up.       |
 
 Uploads to `POST /uploads` as multipart by default and stores the returned URL.
+
+- Type and size are checked on **drop** as well as on browse — the `accept` attribute only constrains
+  the file dialog.
+- A batch upload uses `allSettled`: files that succeed are kept even when a sibling fails, and the
+  failures are reported separately.
+- `.maxFiles()` and `.minFiles()` are enforced in validation, not just in the picker.
 
 ### `Hidden`
 

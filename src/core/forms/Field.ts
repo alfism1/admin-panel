@@ -220,6 +220,15 @@ export abstract class Field<
     return resolveValue(this.config.readOnly, ctx) === true;
   }
 
+  /**
+   * Field-owned validation, run after the shared rules pass. The base layer
+   * only knows the primitive type; semantics such as date bounds or file
+   * counts belong to the field that declared them.
+   */
+  validate(_value: unknown, _ctx: FieldContext, _label: string): string[] {
+    return [];
+  }
+
   /** Whether the field's value should be included in the submitted payload. */
   shouldDehydrate(state: unknown): boolean {
     const rule = this.config.dehydratedRule;

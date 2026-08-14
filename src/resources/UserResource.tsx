@@ -81,7 +81,9 @@ export const UserResource = defineResource({
       .schema([
         FileUpload.make('avatar').image().maxSize(2048).directory('avatars'),
         Textarea.make('bio').rows(4).maxLength(500).autosize().columnSpanFull(),
-        DatePicker.make('joined_at').maxDate(new Date()).displayFormat('dd MMM yyyy'),
+        DatePicker.make('joined_at')
+          .maxDate(() => new Date())
+          .displayFormat('dd MMM yyyy'),
       ]),
   ],
 

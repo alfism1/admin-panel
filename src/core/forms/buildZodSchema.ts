@@ -32,10 +32,10 @@ function compileFieldValidator(field: AnyField, label: string): z.ZodTypeAny {
       return schema;
     }
 
+    // Only the primitive type is checked here; whether the string is a readable
+    // date depends on the field's stored format, so `field.validate()` owns it.
     case 'date':
-      return z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
-        message: `${label} must be a valid date.`,
-      });
+      return z.string({ invalid_type_error: `${label} must be a date.` });
 
     case 'file':
       return z.union([z.string(), z.array(z.string())]);
@@ -138,6 +138,14 @@ export function buildZodSchema({ fields, makeContext }: BuildSchemaOptions) {
           refinement.addIssue({ ...issue, path: name.split('.') });
         }
         continue;
+      }
+
+      for (const message of field.validate(value, ctx, label)) {
+        refinement.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: name.split('.'),
+          message,
+        });
       }
 
       if (rules.confirmed) {
