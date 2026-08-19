@@ -5,6 +5,16 @@ experience**: you describe a resource — its form, table, filters, actions and 
 file, and the framework generates the pages, routes, navigation, validation and state handling.
 
 ```bash
+npm create admin-panel@latest
+```
+
+It asks which database you use, generates `.env` (including a fresh `JWT_SECRET`), installs only the
+driver you picked, and can read your existing schema to write one resource per table. See
+[`packages/create-admin-panel/`](packages/create-admin-panel/).
+
+Or work in this repository directly:
+
+```bash
 pnpm install
 cp .env.example .env
 pnpm dev            # http://localhost:5173 — runs against the built-in mock backend

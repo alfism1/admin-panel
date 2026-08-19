@@ -5,7 +5,8 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'node_modules', 'scripts', 'coverage'] },
+  // `scripts` and `packages` are plain-JS tooling that never enters the app bundle.
+  { ignores: ['dist', 'node_modules', 'scripts', 'coverage', 'packages'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],

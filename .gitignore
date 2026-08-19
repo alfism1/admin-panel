@@ -17,5 +17,9 @@ dist-ssr
 # Generated knowledge-graph artifacts
 graphify-out/
 
+# Built at pack time by packages/create-admin-panel/scripts/build-template.mjs.
+# The repo root is the source of truth; committing a copy would let them drift.
+packages/*/template/
+
 # Test coverage reports
 coverage/

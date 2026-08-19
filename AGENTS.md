@@ -219,3 +219,29 @@ route is protected because the UI hides it.
 - [`docs/database.md`](docs/database.md) — connecting a real database
 - [`docs/performance.md`](docs/performance.md) — measured behaviour at 5M rows, and what still hurts
 - [`docs/recipes.md`](docs/recipes.md) — custom fields, columns, providers, pages
+
+## Publishing the scaffolder
+
+`packages/create-admin-panel/` publishes this repo as `npm create admin-panel@latest`. It is a
+standalone package with its own `node_modules` — the root install does not reach it.
+
+**This repo is the template.** `scripts/build-template.mjs` copies the tree into
+`packages/create-admin-panel/template/` at pack time; the directory is git-ignored so the two cannot
+drift. `pnpm build:template` rebuilds it, and CI runs it on every PR.
+
+The split that matters:
+
+- **Pack time** (`build-template.mjs`) — every rewrite that does _not_ depend on a user's answer.
+  These use anchored string replacements that throw unless they match exactly once, so a change to
+  `vitest.config.ts`, `src/main.tsx`, `server/db/index.ts` or the `format` script fails the build
+  here rather than silently producing a broken scaffold on a stranger's machine.
+- **Run time** (`src/template.js`) — only what varies by answer: project name, `.env`, driver
+  pruning, which resources ship.
+
+So: **if you edit one of those four files and CI fails on "build the scaffolder template", the fix
+is to update the anchor in `build-template.mjs`** — not to loosen the check.
+
+Two files import a database driver by name (`server/db/mongoAdapter.ts` → `mongodb`,
+`server/cli/seed-bulk.ts` → `pg`). A generated project prunes every driver it did not choose, so
+those files are removed too. Adding a third such import means teaching `applyDatabaseVariant` about
+it, or the generated project will not typecheck.
