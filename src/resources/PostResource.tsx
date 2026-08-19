@@ -20,6 +20,8 @@ import { TextColumn } from '@/core/tables/columns/TextColumn';
 import { DateRangeFilter } from '@/core/tables/filters/DateRangeFilter';
 import { SelectFilter } from '@/core/tables/filters/SelectFilter';
 import { TernaryFilter } from '@/core/tables/filters/TernaryFilter';
+import { Repeater } from '@/core/forms/fields/Repeater';
+import { RepeaterAction } from '@/core/forms/fields/RepeaterAction';
 
 const STATUSES = {
   draft: 'Draft',
@@ -106,6 +108,66 @@ export const PostResource = defineResource({
             .label('Feature on the homepage')
             .onColor('success')
             .authorize('post.publish'),
+        ]),
+
+      // A repeater stored in a JSON column: the array *is* `posts.faqs`, so it
+      // rides the ordinary create/update payload with no server code at all.
+      Tab.make('FAQ')
+        .icon('message-square')
+        .schema([
+          Repeater.make('faqs')
+            .label('Questions')
+            .hiddenLabel()
+            .defaultItems(0)
+            .maxItems(10)
+            .collapsible()
+            .cloneable()
+            .distinct('question')
+            .fixIndistinctState()
+            .itemLabel((item) => String(item.question ?? ''))
+            .addActionLabel('Add a question')
+            .schema([
+              TextInput.make('question').required().maxLength(160).columnSpanFull(),
+              Textarea.make('answer').rows(2).required().columnSpanFull(),
+            ]),
+        ]),
+
+      // A repeater backed by its own table. `withRepeaterRelationships` fills
+      // and saves `post_blocks` through the data provider — see main.tsx.
+      Tab.make('Blocks')
+        .icon('list')
+        .schema([
+          Repeater.make('blocks')
+            .label('Content blocks')
+            .hiddenLabel()
+            .relationship({ resource: 'post_blocks', foreignKey: 'post_id' })
+            .orderColumn('position')
+            .defaultItems(0)
+            .grid(2)
+            .collapsed()
+            .cloneable()
+            .itemLabel((item) => String(item.heading || item.kind || ''))
+            .addActionLabel('Add a block')
+            .deleteAction((action) =>
+              action.requiresConfirmation({
+                description: 'The block is removed from the post when you save.',
+              }),
+            )
+            .extraItemActions([
+              RepeaterAction.make('clear')
+                .label('Clear body')
+                .icon('x-circle')
+                .visible((item) => Boolean(item.body))
+                .action(({ item, set }) => set({ ...item, body: '' })),
+            ])
+            .schema([
+              Select.make('kind')
+                .options({ paragraph: 'Paragraph', quote: 'Quote', code: 'Code' })
+                .native()
+                .required(),
+              TextInput.make('heading').maxLength(180),
+              Textarea.make('body').rows(3).required().columnSpanFull(),
+            ]),
         ]),
 
       Tab.make('Media')

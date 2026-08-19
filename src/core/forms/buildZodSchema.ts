@@ -17,8 +17,12 @@ function isBlank(value: unknown): boolean {
   );
 }
 
-/** Builds the per-field Zod type from the declarative rules on the builder. */
-function compileFieldValidator(field: AnyField, label: string): z.ZodTypeAny {
+/**
+ * Builds the per-field Zod type from the declarative rules on the builder.
+ * Exported because `Repeater` has to run the same rules against items its own
+ * schema owns, which `superRefine` never reaches.
+ */
+export function compileFieldValidator(field: AnyField, label: string): z.ZodTypeAny {
   const rules: ValidationRules = field.definition.validation;
 
   switch (field.valueType) {

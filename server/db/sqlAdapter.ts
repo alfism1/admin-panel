@@ -4,6 +4,7 @@ import type { Dialect } from './connect';
 import { introspect } from './introspect';
 import {
   HttpError,
+  type ColumnKind,
   type DatabaseAdapter,
   type ListParams,
   type ResourceSchema,
@@ -128,6 +129,20 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
     return row;
   };
 
+  /**
+   * SQLite and SQL Server have no JSON type, so a migration declares those
+   * columns as `text` and introspection classifies them as `string` — the
+   * declared kind alone would let an array reach the driver, which can only
+   * bind primitives. Encoding on shape as well keeps every dialect working.
+   */
+  const encode = (kind: ColumnKind | undefined, value: unknown): unknown => {
+    if (value === null || value === undefined) return value;
+    if (kind === 'json') return JSON.stringify(value);
+    if (typeof value !== 'object') return value;
+    if (value instanceof Date || Buffer.isBuffer(value)) return value;
+    return JSON.stringify(value);
+  };
+
   /** Drops keys that are not real columns so a stray field cannot break the query. */
   const writable = (schema: ResourceSchema, data: Row): Row => {
     const output: Row = {};
@@ -135,7 +150,7 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
       if (key === schema.primaryKey) continue;
       if (!hasColumn(schema, key)) continue;
       const kind = schema.columns.find((column) => column.name === key)?.kind;
-      output[key] = kind === 'json' && value !== null ? JSON.stringify(value) : value;
+      output[key] = encode(kind, value);
     }
     return output;
   };

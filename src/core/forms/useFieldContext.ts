@@ -8,6 +8,36 @@ export interface ContextOptions {
   record: FormValues | null;
   /** Field this context belongs to; its own value is always a dependency. */
   ownName?: string;
+  /**
+   * Path prefix for a nested item, e.g. `line_items.0`. Every `get`/`set` is
+   * resolved against it, so a field inside a repeater reads `get('quantity')`
+   * exactly as it would at the top level.
+   */
+  scope?: string;
+}
+
+/** Climbs one level out of the current scope — Filament's `$get('../../x')`. */
+const PARENT = '../';
+
+export function resolveScoped(scope: string | undefined, path: string): string {
+  let base = scope ?? '';
+  let rest = path;
+
+  while (rest.startsWith(PARENT)) {
+    rest = rest.slice(PARENT.length);
+    base = base.split('.').slice(0, -1).join('.');
+  }
+
+  return base ? `${base}.${rest}` : rest;
+}
+
+/** Re-points an existing context at a nested path, for code that has no form. */
+export function scopeContext(ctx: FieldContext, scope: string): FieldContext {
+  return {
+    ...ctx,
+    get: <T>(path: string): T => ctx.get<T>(resolveScoped(scope, path)),
+    set: (path, value) => ctx.set(resolveScoped(scope, path), value),
+  };
 }
 
 function sameList(a: string[], b: string[]): boolean {
@@ -19,7 +49,12 @@ function sameList(a: string[], b: string[]): boolean {
  * actually read. A field that depends on nothing never re-renders when a
  * sibling changes, so typing in one input does not repaint the whole form.
  */
-export function useReactiveContext({ operation, record, ownName }: ContextOptions): FieldContext {
+export function useReactiveContext({
+  operation,
+  record,
+  ownName,
+  scope,
+}: ContextOptions): FieldContext {
   const form = useFormContext();
   const { user, can } = useAuth();
 
@@ -34,10 +69,15 @@ export function useReactiveContext({ operation, record, ownName }: ContextOption
   const ctx: FieldContext = {
     state: ownName ? form.getValues(ownName) : undefined,
     get: <T>(path: string): T => {
-      accessed.add(path);
-      return form.getValues(path) as T;
+      const resolved = resolveScoped(scope, path);
+      accessed.add(resolved);
+      return form.getValues(resolved) as T;
     },
-    set: (path, value) => form.setValue(path, value, { shouldDirty: true, shouldValidate: true }),
+    set: (path, value) =>
+      form.setValue(resolveScoped(scope, path), value, {
+        shouldDirty: true,
+        shouldValidate: true,
+      }),
     record,
     operation,
     user,
@@ -64,20 +104,22 @@ export function createStaticContext(
     set?: FieldContext['set'];
   },
 ): FieldContext {
-  const read = <T>(path: string): T => {
-    const segments = path.split('.');
+  const readRaw = <T>(path: string): T => {
     let cursor: unknown = values;
-    for (const segment of segments) {
+    for (const segment of path.split('.')) {
       if (cursor == null || typeof cursor !== 'object') return undefined as T;
       cursor = (cursor as FormValues)[segment];
     }
     return cursor as T;
   };
 
+  const read = <T>(path: string): T => readRaw<T>(resolveScoped(options.scope, path));
+
   return {
-    state: options.ownName ? read(options.ownName) : undefined,
+    // `ownName` is already absolute, so it reads past the scope.
+    state: options.ownName ? readRaw(options.ownName) : undefined,
     get: read,
-    set: options.set ?? (() => undefined),
+    set: (path, value) => options.set?.(resolveScoped(options.scope, path), value),
     record: options.record,
     operation: options.operation,
     user: options.user,

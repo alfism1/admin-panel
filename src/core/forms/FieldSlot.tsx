@@ -18,6 +18,21 @@ interface FieldSlotProps {
   field: Field;
   operation: Operation;
   record: FormValues | null;
+  /** Path prefix for a nested item; makes the field's resolvers item-relative. */
+  scope?: string;
+  /** Overrides the bound path. Simple repeaters need it: the item *is* the value. */
+  name?: string;
+  /** Forced on by a disabled ancestor, which the field itself cannot see. */
+  disabled?: boolean;
+}
+
+/**
+ * Once children register at `items.0.child`, React Hook Form treats `items` as a
+ * field array and files the array's own error under `.root` instead of on the
+ * node itself.
+ */
+function messageOf(error: { message?: string; root?: { message?: string } } | undefined) {
+  return error?.message ?? error?.root?.message;
 }
 
 /**
@@ -25,9 +40,10 @@ interface FieldSlotProps {
  * and owns the only subscriptions that field needs. Errors come from
  * `Controller`'s `fieldState`, which is scoped to this field alone.
  */
-export function FieldSlot({ field, operation, record }: FieldSlotProps) {
+export function FieldSlot({ field, operation, record, scope, name, disabled }: FieldSlotProps) {
   const form = useFormContext();
-  const ctx = useReactiveContext({ operation, record, ownName: field.name });
+  const bound = name ?? (scope ? `${scope}.${field.name}` : field.name);
+  const ctx = useReactiveContext({ operation, record, ownName: bound, scope });
   const generatedId = React.useId();
 
   const config = field.definition;
@@ -43,7 +59,7 @@ export function FieldSlot({ field, operation, record }: FieldSlotProps) {
   if (!field.isActive(ctx)) return null;
 
   const helperText = resolveValue(config.helperText, ctx);
-  const id = `${generatedId}-${field.name.replace(/\./g, '-')}`;
+  const id = `${generatedId}-${bound.replace(/\./g, '-')}`;
   const mode = field.layoutMode;
 
   const Control = config.custom ?? field.control;
@@ -51,9 +67,9 @@ export function FieldSlot({ field, operation, record }: FieldSlotProps) {
   return (
     <Controller
       control={form.control}
-      name={field.name}
+      name={bound}
       render={({ field: controller, fieldState }) => {
-        const error = fieldState.error?.message;
+        const error = messageOf(fieldState.error);
         const describedBy =
           [error ? `${id}-error` : null, helperText ? `${id}-help` : null]
             .filter(Boolean)
@@ -66,7 +82,7 @@ export function FieldSlot({ field, operation, record }: FieldSlotProps) {
           helperText,
           placeholder: config.placeholder,
           required: field.isRequired(ctx),
-          disabled: field.isDisabled(ctx),
+          disabled: disabled === true || field.isDisabled(ctx),
           readOnly: field.isReadOnly(ctx),
           error,
           describedBy,
@@ -74,7 +90,7 @@ export function FieldSlot({ field, operation, record }: FieldSlotProps) {
 
         const control = (
           <Control
-            name={field.name}
+            name={bound}
             config={config}
             value={controller.value as unknown}
             onChange={(next: unknown) => {
