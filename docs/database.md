@@ -88,13 +88,23 @@ No database installed? SQLite needs no server:
 
 ```bash
 echo 'DATABASE_URL=sqlite:./data/admin.db' >> .env
-pnpm db:seed        # migrates users / roles / posts, then seeds them
+pnpm db:seed        # migrates users / roles / posts / post_blocks, then seeds them
 pnpm dev:full
 ```
 
-`pnpm db:seed` runs any pending migrations and then inserts demo rows — 30 users, 3 roles and 24
-posts. Safe to re-run: tables that already have rows are left alone. Sign in with
+`pnpm db:seed` runs any pending migrations and then inserts demo rows — 30 users, 3 roles, 24 posts
+and 24 post blocks. Safe to re-run: tables that already have rows are left alone. Sign in with
 `admin@example.com` / `password`.
+
+`post_blocks` is the child table behind the post form's **Blocks** repeater, and `posts.faqs` is the
+JSON column behind its **FAQ** repeater. Neither needs a line of server code: introspection turns
+the table into a REST resource, and the JSON column is just a column. See
+[`recipes.md`](recipes.md#a-repeater-backed-by-a-child-table).
+
+> JSON columns are written back encoded whatever the dialect calls them — PostgreSQL and MySQL have
+> a real `json` type, while SQLite and SQL Server take text, so the adapter also encodes on value
+> shape. They are **not** decoded on the way out: those two dialects return the raw string, and it is
+> the field's job to parse it (`Repeater` does; `formatStateUsing()` covers the rest).
 
 ---
 

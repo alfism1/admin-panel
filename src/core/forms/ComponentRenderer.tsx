@@ -8,18 +8,30 @@ interface RendererProps {
   components: FormComponent[];
   operation: Operation;
   record: FormValues | null;
+  /**
+   * Path prefix for a nested item, e.g. `line_items.0`. Fields bind to
+   * `scope.name` and their resolvers read relative to it, so one schema can be
+   * rendered many times over without being cloned.
+   */
+  scope?: string;
+  /** Forced on by a disabled ancestor, which the children cannot see. */
+  disabled?: boolean;
 }
 
 function LayoutSlot({
   layout,
   operation,
   record,
+  scope,
+  disabled,
 }: {
   layout: Layout;
   operation: Operation;
   record: FormValues | null;
+  scope?: string;
+  disabled?: boolean;
 }) {
-  const ctx = useReactiveContext({ operation, record });
+  const ctx = useReactiveContext({ operation, record, scope });
   if (!layout.isActive(ctx)) return null;
 
   const Component = layout.component;
@@ -29,14 +41,26 @@ function LayoutSlot({
         layout={layout}
         ctx={ctx}
         renderComponents={(children) => (
-          <ComponentRenderer components={children} operation={operation} record={record} />
+          <ComponentRenderer
+            components={children}
+            operation={operation}
+            record={record}
+            scope={scope}
+            disabled={disabled}
+          />
         )}
       />
     </div>
   );
 }
 
-export function ComponentRenderer({ components, operation, record }: RendererProps) {
+export function ComponentRenderer({
+  components,
+  operation,
+  record,
+  scope,
+  disabled,
+}: RendererProps) {
   return (
     <>
       {components.map((component, index) => {
@@ -47,11 +71,20 @@ export function ComponentRenderer({ components, operation, record }: RendererPro
               layout={component}
               operation={operation}
               record={record}
+              scope={scope}
+              disabled={disabled}
             />
           );
         }
         return (
-          <FieldSlot key={component.name} field={component} operation={operation} record={record} />
+          <FieldSlot
+            key={component.name}
+            field={component}
+            operation={operation}
+            record={record}
+            scope={scope}
+            disabled={disabled}
+          />
         );
       })}
     </>

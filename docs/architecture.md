@@ -114,6 +114,19 @@ If you write a provider or an adapter, these four are where bugs hide:
 > discarded. If you want _"3 records deleted"_ in a toast, the number is already on the wire —
 > widen the client signature to surface it.
 
+## Nested writes live at seam 1
+
+There is deliberately no "save these children with their parent" call anywhere in the three
+contracts, and `Repeater.relationship()` does not add one. It is a **decorator over seam 1**
+([`repeaterRelationships.ts`](../src/resources/data/repeaterRelationships.ts)): `getOne` fans out to
+`getList` for the children, and `create`/`update` lift the array out of the payload before saving the
+parent, then reconcile the child rows with `create`, `update` and `deleteMany`.
+
+That keeps the wire and the adapters untouched — a child table becomes a REST resource through
+ordinary introspection — at the cost of several round trips per save and no transaction around them.
+A backend that can accept nested writes in one request should implement seam 1 itself instead of
+wrapping this.
+
 ---
 
 ## Which seam do I touch?

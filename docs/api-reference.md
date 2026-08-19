@@ -140,6 +140,133 @@ Uploads to `POST /uploads` as multipart by default and stores the returned URL.
 
 Carries a value through the form without rendering anything.
 
+### `Repeater`
+
+Stores an array on the record and renders the same schema once per item, bound to
+`name.index.child`. Nothing is cloned: `ComponentRenderer` takes a `scope`, so each item is the one
+schema rendered under a different path prefix.
+
+| Method                                          | Description                                                        |
+| ----------------------------------------------- | ------------------------------------------------------------------ |
+| `.schema([...])`                                | The fields (and layouts) repeated in each item.                    |
+| `.simple(field)`                                | One field per item, stored as a flat array of scalars.             |
+| `.defaultItems(n)`                              | Blank items to start with on create. Default `1`.                  |
+| `.default([...])`                               | An explicit starting array; turns `defaultItems` seeding off.      |
+| `.minItems(n)` / `.maxItems(n)`                 | Count bounds. A positive `minItems` also makes the field required. |
+| `.distinct(name \| [names])`                    | Rejects items that repeat a value for the named child.             |
+| `.addable(Resolver<boolean>?)`                  | Whether new items can be added.                                    |
+| `.deletable(Resolver<boolean>?)`                | Whether items can be removed.                                      |
+| `.cloneable(Resolver<boolean>?)`                | Adds a duplicate button. Off by default.                           |
+| `.reorderable(Resolver<boolean>?)`              | Master switch for reordering.                                      |
+| `.reorderableWithButtons(boolean?)`             | Up / down buttons. On by default.                                  |
+| `.reorderableWithDragAndDrop(boolean?)`         | Drag handle. On by default.                                        |
+| `.addActionLabel(text)`                         | Overrides `Add to {label}`.                                        |
+| `.addActionAlignment('start'\|'center'\|'end')` | Where the add button sits.                                         |
+| `.collapsible()` / `.collapsed()`               | Foldable items; `collapsed()` implies `collapsible()`.             |
+| `.itemLabel((item, index) => string)`           | Titles an item from its own state.                                 |
+| `.itemNumbers(boolean?)`                        | The `1`, `2`, `3` badge. On by default.                            |
+| `.grid(n \| { sm, md, lg })`                    | Lays each item's fields out in columns.                            |
+| `.table([{ label, width?, align? }])`           | Renders items as rows under a shared header instead of as cards.   |
+| `.compact(boolean?)`                            | Tighter padding.                                                   |
+| `.orderColumn(key)`                             | Writes each item's position into that key on submit.               |
+
+Inside an item, `ctx.get()` and `ctx.set()` are **item-relative**: `get('quantity')` reads that
+item's `quantity`. `../` climbs one level out, so `get('../../title')` reaches a top-level field —
+the same shape as Filament's `$get('../../title')`. Because the scope lives in the context the slot
+builds, this covers **every** resolver a field declares, including subclass-specific ones like
+`Select.options`.
+
+Child validation runs per item and shares `compileFieldValidator` with `buildZodSchema`, so
+`required()`, the length/format rules, the field's own `validate()` and any `rule()` you added all
+produce the messages they would at the top level. `buildZodSchema` can only attach an issue to the
+repeater's own path, so the form-level message is a count (`2 items need attention.`) and the
+specific messages are rendered next to the offending item.
+
+#### `distinct()` and `fixIndistinctState()`
+
+| Method                       | Description                                            |
+| ---------------------------- | ------------------------------------------------------ |
+| `.distinct(name \| [names])` | Rejects items that repeat a value for the named child. |
+| `.fixIndistinctState(bool?)` | Corrects the clash instead of only reporting it.       |
+
+With `fixIndistinctState()`, the item the user just edited keeps the value and every other item
+holding it is reset — `false` for a boolean child, `null` otherwise. A record that _arrives_ holding
+duplicates is left alone: the fix only fires on an edit, which is what makes "just edited" knowable.
+
+#### Item actions
+
+`extraItemActions([...])` adds buttons to every item header. They are
+[`RepeaterAction`](../src/core/forms/fields/RepeaterAction.ts) instances — core's `Action` is built
+around a persisted record and the data provider, which a form item is neither:
+
+```ts
+RepeaterAction.make('clear')
+  .label('Clear body') // or (item, index) => string
+  .icon('x-circle')
+  .color('danger')
+  .tooltip('Empties the body')
+  .visible((item) => Boolean(item.body))
+  .disabled((item, index) => index === 0)
+  .authorize('post.publish')
+  .requiresConfirmation({ heading: '…', description: '…' })
+  .action(({ item, index, items, set, replace, remove, field }) => set({ ...item, body: '' }));
+```
+
+`set` replaces this item, `replace` the whole array, `remove` drops the item, and `field` is the
+repeater's own `FieldContext` for reaching the wider form.
+
+Each built-in control takes a modifier of the same type — return a changed copy to relabel, re-icon,
+gate or replace its behaviour outright:
+
+`.addAction(fn)` · `.deleteAction(fn)` · `.cloneAction(fn)` · `.moveUpAction(fn)` ·
+`.moveDownAction(fn)` · `.reorderAction(fn)` (the drag handle) · `.collapseAction(fn)`
+
+```ts
+Repeater.make('blocks').deleteAction((action) =>
+  action.requiresConfirmation({ description: 'Removed from the post when you save.' }),
+);
+```
+
+The add action has no item, so its predicates receive `({}, itemCount)`.
+
+#### `relationship()` — items as rows of another resource
+
+| Method                                                       | Description                                          |
+| ------------------------------------------------------------ | ---------------------------------------------------- |
+| `.relationship({ resource, foreignKey, … })`                 | Backs the items with another resource's rows.        |
+| `.mutateRelationshipDataBeforeFillUsing(fn)`                 | Runs on each loaded child before it becomes an item. |
+| `.mutateRelationshipDataBeforeCreateUsing(fn)`               | Runs on an item before it is inserted.               |
+| `.mutateRelationshipDataBeforeSaveUsing(fn)`                 | Runs on an item before an existing child is updated. |
+| `.modifyRecordsUsing(fn)`                                    | Filters or reorders the loaded children.             |
+| `.afterCreate(fn)` · `.afterUpdate(fn)` · `.afterDelete(fn)` | Fire per child row.                                  |
+
+`relationship()` also takes optional `filters`, `sort` and `perPage`; without `sort` it orders by
+`orderColumn()` when one is set.
+
+This needs the decorator installed once at boot — see
+[`src/main.tsx`](../src/main.tsx) and [`recipes.md`](recipes.md#a-repeater-backed-by-a-child-table):
+
+```ts
+setDataProvider(withRepeaterRelationships(restDataProvider));
+```
+
+Everything happens at seam 1 through the seven methods a `DataProvider` already has, so no endpoint
+is written and the mock backend and the Node API behave identically. On save, items carrying a known
+id are updated, the rest are inserted, and rows nobody kept are deleted; `delete`/`deleteMany` on the
+parent clear the children first, so behaviour does not depend on `ON DELETE CASCADE`.
+
+Worth knowing:
+
+- The repeater's key must be **top-level** on the form. A dotted name is silently left in the parent
+  payload.
+- `getList` does not hydrate — a 25-row table would cost 25 extra requests for data no column shows.
+- The sync is several requests, not a transaction. Writes run before deletes so a mid-way failure
+  cannot lose a row the form still holds.
+- Cloning an item drops its `id`, or the copy would save over the row it came from.
+
+Not implemented: `fixIndistinctState()` does not disable the conflicting _option_ the way Filament's
+`Select` does, and `table()` renders a CSS grid rather than a `<table>`.
+
 ---
 
 ## Form layouts

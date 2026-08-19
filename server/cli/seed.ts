@@ -133,6 +133,15 @@ async function seedRows(db: Knex): Promise<void> {
         category: (['engineering', 'product', 'design'] as const)[index % 3],
         published_at: status === 'published' ? daysAgo(index * 3) : null,
         views: (index * 371) % 5000,
+        // A JSON-column repeater: the array *is* the column.
+        faqs: JSON.stringify(
+          index % 3 === 0
+            ? []
+            : [
+                { question: 'Who is this for?', answer: 'Anyone building an admin panel.' },
+                { question: 'Is it free?', answer: 'Yes.' },
+              ],
+        ),
         created_at: daysAgo(index * 3 + 1),
         updated_at: daysAgo(index),
       };
@@ -140,6 +149,29 @@ async function seedRows(db: Knex): Promise<void> {
 
     await db('posts').insert(posts);
     console.log(`  · ${posts.length} posts`);
+  }
+
+  // A relationship repeater: rows of their own table, ordered by `position`.
+  if ((await db('post_blocks').count({ total: '*' }).first())?.total == 0) {
+    const blocks = Array.from({ length: 12 }, (_, index) => index + 1).flatMap((postId) => [
+      {
+        post_id: postId,
+        kind: 'paragraph',
+        heading: 'Why it matters',
+        body: 'Declaring the shape once keeps the form, the table and the API in step.',
+        position: 0,
+      },
+      {
+        post_id: postId,
+        kind: 'quote',
+        heading: '',
+        body: 'Convention where it helps, configuration where it counts.',
+        position: 1,
+      },
+    ]);
+
+    await db('post_blocks').insert(blocks);
+    console.log(`  · ${blocks.length} post blocks`);
   }
 }
 

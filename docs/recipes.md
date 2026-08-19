@@ -74,6 +74,125 @@ export class ColorInput extends Field<string, ColorInputConfig> {
 
 ---
 
+## A repeating group of fields
+
+`Repeater` is a core field — it knows nothing about this app, so it sits in
+[`src/core/forms/fields/Repeater.ts`](../src/core/forms/fields/Repeater.ts) beside `TextInput` and
+`FileUpload`. Every method is listed in the [API reference](api-reference.md#repeater); this is how
+it reads in a resource:
+
+```tsx
+import { Repeater } from '@/core/forms/fields/Repeater';
+
+form: [
+  Repeater.make('line_items')
+    .label('Line items')
+    .schema([
+      Select.make('product_id').relationship({ resource: 'products', titleKey: 'name' }).required(),
+      TextInput.make('quantity').numeric().default('1').required(),
+      TextInput.make('note').visible((ctx) => ctx.get('quantity') !== '1'),
+    ])
+    .grid(3)
+    .minItems(1)
+    .maxItems(20)
+    .distinct('product_id')
+    .cloneable()
+    .collapsible()
+    .itemLabel((item) => (item.note ? `${String(item.product_id)} — ${String(item.note)}` : null))
+    .orderColumn('position'),
+];
+```
+
+The value is a plain array on the record, so the API sees
+`{ line_items: [{ product_id: 3, quantity: '2', position: 0 }, …] }` — store it in a JSON column, or
+split it server-side in your route.
+
+Two shorthands cover the common shapes:
+
+```ts
+// A flat array of scalars: ['ada@example.com', 'grace@example.com']
+Repeater.make('invitees').simple(TextInput.make('email').email().required());
+
+// Rows under a shared header rather than cards
+Repeater.make('rates')
+  .schema([TextInput.make('band'), TextInput.make('percent').numeric()])
+  .table([{ label: 'Band' }, { label: 'Percent', width: '8rem', align: 'end' }])
+  .compact();
+```
+
+Inside an item, resolvers are scoped to that item: `ctx.get('quantity')` reads the sibling in the
+same row, and `ctx.get('../../title')` climbs back out to the top-level form — the same shape as
+Filament's `$get('../../title')`.
+
+The post form ships both storage shapes as worked examples — see
+[`PostResource.tsx`](../src/resources/PostResource.tsx), the **FAQ** and **Blocks** tabs.
+
+### A repeater stored in a JSON column
+
+The simplest case: the array _is_ the column, so it rides the ordinary create/update payload and
+needs no server code. `posts.faqs` is declared in
+[`20260819090000_post_repeaters.ts`](../server/migrations/20260819090000_post_repeaters.ts):
+
+```ts
+table.json('faqs'); // …or table.text('faqs') where the dialect has no JSON type
+```
+
+SQLite and SQL Server hand that column back as a string. `Repeater` parses it on the way in, so the
+same field works on every dialect; `formatStateUsing()` still overrides if you need something else.
+
+### A repeater backed by a child table
+
+`relationship()` maps the items to rows of another resource. The migration creates the table and
+introspection turns it into a REST resource on its own — again, no route to write:
+
+```ts
+await knex.schema.createTable('post_blocks', (table) => {
+  table.increments('id').primary();
+  table.integer('post_id').notNullable().references('id').inTable('posts').onDelete('CASCADE');
+  table.string('kind', 20).notNullable().defaultTo('paragraph');
+  table.text('body').defaultTo('');
+  table.integer('position').notNullable().defaultTo(0);
+  table.index(['post_id', 'position']);
+});
+```
+
+```tsx
+Repeater.make('blocks')
+  .relationship({ resource: 'post_blocks', foreignKey: 'post_id' })
+  .orderColumn('position')
+  .schema([Select.make('kind').options(KINDS).required(), Textarea.make('body').required()]);
+```
+
+Filling and saving happen at **seam 1**, through the seven methods a `DataProvider` already has.
+Install the decorator once at boot:
+
+```ts
+// src/main.tsx
+import { setDataProvider } from '@/core/data/DataProvider';
+import { restDataProvider } from '@/core/data/restDataProvider';
+import { withRepeaterRelationships } from '@/resources/data/repeaterRelationships';
+
+setDataProvider(withRepeaterRelationships(restDataProvider));
+```
+
+`getOne` loads the children onto the record; `create`/`update` lift the array out of the payload,
+save the parent, then diff the items against the rows on file — known ids are updated, the rest
+inserted, and anything nobody kept is deleted. `delete`/`deleteMany` clear the children first so the
+result does not depend on the schema declaring `ON DELETE CASCADE`.
+
+Because it is a decorator, it composes: wrap your own provider instead of `restDataProvider` and
+relationships keep working over GraphQL or anything else.
+
+`VITE_USE_MOCK=true` needs the fixture table too. The core mock backend is a closed layer, so
+[`mockPostBlocks.ts`](../src/resources/data/mockPostBlocks.ts) wraps its Axios adapter rather than
+editing it — the same trick `main.tsx` already plays to install the mock at all:
+
+```ts
+apiClient.defaults.adapter = withMockPostBlocks(mockAdapter);
+```
+
+---
+
 ## A custom table cell
 
 ```tsx

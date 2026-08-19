@@ -109,7 +109,7 @@ Traps worth knowing before you write a new test:
 ```text
 src/
 ├── core/           ← the framework layer — treat as closed, see below
-│   ├── forms/      Field builders, layouts, Zod compiler, SchemaForm renderer
+│   ├── forms/      Field builders (incl. Repeater), layouts, Zod compiler, SchemaForm
 │   ├── tables/     Column & filter builders, SchemaTable renderer, URL state
 │   ├── actions/    Action builders, modal/confirmation runner
 │   ├── resources/  defineResource, registry, route generation, CRUD pages
@@ -135,20 +135,28 @@ scripts/            gen-resource.mjs scaffolder
 
 Every customisation has a designed extension point outside `core`:
 
-| You want to…             | Do this instead of editing core                       |
-| ------------------------ | ----------------------------------------------------- |
-| A new field type         | Subclass `Field` in `src/resources/fields/`           |
-| A custom control or cell | React component in `src/resources/components/`        |
-| A one-off control        | `.customComponent()` on an existing field             |
-| A new column type        | Subclass `Column`, or `.cell()` for a custom renderer |
-| Change data fetching     | Implement `DataProvider`, call `setDataProvider()`    |
-| Support another database | Implement `DatabaseAdapter` in `server/db/`           |
-| Change the DB schema     | Add a migration in `server/migrations/`               |
-| A custom page            | `src/pages/` + `registerNavigationItems()`            |
+| You want to…                    | Do this instead of editing core                       |
+| ------------------------------- | ----------------------------------------------------- |
+| A field type **this app** needs | Subclass `Field` in `src/resources/fields/`           |
+| A custom control or cell        | React component in `src/resources/components/`        |
+| A one-off control               | `.customComponent()` on an existing field             |
+| A new column type               | Subclass `Column`, or `.cell()` for a custom renderer |
+| Change data fetching            | Implement `DataProvider`, call `setDataProvider()`    |
+| Support another database        | Implement `DatabaseAdapter` in `server/db/`           |
+| Change the DB schema            | Add a migration in `server/migrations/`               |
+| A custom page                   | `src/pages/` + `registerNavigationItems()`            |
 
 See [`docs/recipes.md`](docs/recipes.md) for worked examples of each. If a task seems to require a
 `core` change, say so explicitly and explain why the extension points do not cover it — do not
 silently patch the framework.
+
+**"Closed" is about layering, not size.** The test is whether the thing knows about this app's
+domain. A colour picker for one resource belongs in `src/resources/fields/`; a field type any admin
+panel would want — `Repeater` is the worked example — belongs in `src/core/forms/fields/` beside
+`TextInput` and `FileUpload`. Building a generic primitive _outside_ core is possible, but it pays a
+tax: no access to `SchemaComponent.mutate`, no reuse of `compileFieldValidator`, and no way to teach
+`FieldSlot` anything. If you find yourself reimplementing core internals from `src/resources/`, the
+code is in the wrong layer — say so rather than duplicating them.
 
 ## Adding a resource
 
