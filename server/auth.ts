@@ -1,4 +1,5 @@
-import bcrypt from 'bcryptjs';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { hash as bcryptHash, verify as bcryptVerify } from '@node-rs/bcrypt';
 import jwt from 'jsonwebtoken';
 import { HttpError, type DatabaseAdapter, type Row } from './db/types';
 import { env } from './env';
@@ -32,6 +33,22 @@ function verify(token: string, type: TokenPayload['type']): string {
   } catch {
     throw new HttpError(401, 'Session expired. Please sign in again.');
   }
+}
+
+const BCRYPT_COST = 10;
+
+/**
+ * Verifying a real hash costs ~60 ms; bailing out early on an unknown address
+ * costs ~0. That difference is a user-enumeration oracle, so the no-such-user
+ * path burns the same work against a throwaway hash before failing.
+ */
+const DUMMY_HASH = '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
+
+/** Length-independent comparison for the legacy plain-text column case. */
+function timingSafeCompare(a: string, b: string): boolean {
+  const left = createHash('sha256').update(a).digest();
+  const right = createHash('sha256').update(b).digest();
+  return timingSafeEqual(left, right);
 }
 
 function parsePermissions(value: unknown): string[] {
@@ -108,14 +125,40 @@ export function createAuth(db: DatabaseAdapter) {
     permissions: ['*'],
   });
 
+  /**
+   * Every authenticated request resolves its user, which costs a `users` read
+   * plus a `roles` read — two round trips before the handler starts. A short
+   * TTL collapses a burst of requests onto one pair.
+   *
+   * The trade is staleness: a disabled account or an edited role stays live for
+   * up to the TTL. That is why the default is seconds rather than minutes, and
+   * why AUTH_CACHE_TTL=0 turns it off for deployments that cannot accept it.
+   */
+  const cache = new Map<string, { user: AuthUser; expiresAt: number }>();
+
   const loadUser = async (id: string): Promise<AuthUser> => {
     if (!hasUserTable) {
       if (id !== 'env-admin') throw new HttpError(401, 'Unauthenticated.');
       return fallbackUser();
     }
+
+    const now = Date.now();
+    const hit = cache.get(id);
+    if (hit && hit.expiresAt > now) return hit.user;
+
     const row = await db.findBy(auth.table, db.schema(auth.table).primaryKey, id);
-    if (!row) throw new HttpError(401, 'Unauthenticated.');
-    return toAuthUser(row);
+    if (!row) {
+      cache.delete(id);
+      throw new HttpError(401, 'Unauthenticated.');
+    }
+
+    const user = await toAuthUser(row);
+    if (auth.cacheTtlMs > 0) {
+      // Bounded so a token-rotating caller cannot grow this map without limit.
+      if (cache.size > 5_000) cache.clear();
+      cache.set(id, { user, expiresAt: now + auth.cacheTtlMs });
+    }
+    return user;
   };
 
   return {
@@ -148,11 +191,16 @@ export function createAuth(db: DatabaseAdapter) {
       }
 
       const row = await db.findBy(auth.table, auth.emailColumn, email);
-      if (!row) throw new HttpError(401, 'These credentials do not match our records.');
+      if (!row) {
+        await bcryptVerify(password, DUMMY_HASH).catch(() => false);
+        throw new HttpError(401, 'These credentials do not match our records.');
+      }
 
       const stored = String(row[auth.passwordColumn] ?? '');
       const isHashed = /^\$2[aby]\$/.test(stored);
-      const valid = isHashed ? await bcrypt.compare(password, stored) : stored === password;
+      const valid = isHashed
+        ? await bcryptVerify(password, stored)
+        : stored !== '' && timingSafeCompare(stored, password);
       if (!valid) throw new HttpError(401, 'These credentials do not match our records.');
 
       if (row.is_active === false || row.is_active === 0) {
@@ -185,7 +233,7 @@ export function createAuth(db: DatabaseAdapter) {
       const value = data[auth.passwordColumn];
       if (typeof value !== 'string' || value === '') return data;
       if (/^\$2[aby]\$/.test(value)) return data;
-      return { ...data, [auth.passwordColumn]: await bcrypt.hash(value, 10) };
+      return { ...data, [auth.passwordColumn]: await bcryptHash(value, BCRYPT_COST) };
     },
   };
 }

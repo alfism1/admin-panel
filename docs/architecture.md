@@ -105,6 +105,10 @@ If you write a provider or an adapter, these four are where bugs hide:
 - **list result** — server returns `{ rows, total }`; the route wraps it in snake_case
   `{ data, meta: { total, page, per_page, last_page } }`; the client reads it back as camelCase
   `{ data, meta: { …, perPage, lastPage } }`. `restDataProvider` also accepts Laravel's flat shape.
+  Two optional fields ride along and are currently server-side only, so a provider that ignores them
+  behaves exactly as before: `meta.approximate` marks `total` as an estimate rather than a
+  `count(*)`, and `meta.next_cursor` is the marker to pass back as `?cursor=` to seek the next page
+  instead of paying for `offset`. See [`performance.md`](performance.md) for when each appears.
 - **id** — `string | number` on the client, always `string` by the time it reaches an adapter.
 - **filters** — `Record<string, unknown>` on the client → `filter[key]=value` on the wire →
   `Record<string, string>` on the server. Adapters parse `a,b` as a set and `from..to` as a range.

@@ -202,14 +202,23 @@ export async function introspect(db: Knex, dialect: Dialect): Promise<ResourceSc
       })
       .filter((relation) => tableSet.has(relation.target));
 
+    // A `tsvector` column is a standing invitation to use it: whoever added it
+    // did so to make search indexable, so search switches to it automatically
+    // rather than needing a second piece of configuration to agree.
+    const searchVector = columns.find((column) => /^tsvector$/i.test(column.rawType))?.name;
+
     schemas.push({
       name: table,
       primaryKey,
-      columns,
+      columns: columns.filter((column) => column.name !== searchVector),
       searchable: columns
-        .filter((column) => column.kind === 'string' && column.name !== primaryKey)
+        .filter(
+          (column) =>
+            column.kind === 'string' && column.name !== primaryKey && column.name !== searchVector,
+        )
         .map((column) => column.name),
       relations,
+      ...(searchVector ? { searchVector } : {}),
     });
   }
 

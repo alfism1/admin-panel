@@ -77,7 +77,10 @@ export function createKnex(url: string, dialect: Exclude<Dialect, 'mongodb'>): K
     client: KNEX_CLIENT[dialect],
     connection: url,
     searchPath: dialect === 'postgres' && env.schema ? [env.schema] : undefined,
-    pool: { min: 0, max: 10 },
+    // Sized by DB_POOL_MAX. Every in-flight query holds one of these, so a
+    // handful of slow ones will queue everything behind them — the pool is the
+    // shared resource that decides whether one bad query stalls the panel.
+    pool: { min: env.pool.min, max: env.pool.max },
   });
 }
 

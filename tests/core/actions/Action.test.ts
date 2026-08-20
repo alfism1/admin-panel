@@ -4,6 +4,8 @@ import { BulkAction, DeleteBulkAction } from '@/core/actions/BulkAction';
 import { CreateAction } from '@/core/actions/CreateAction';
 import { DeleteAction } from '@/core/actions/DeleteAction';
 import { EditAction } from '@/core/actions/EditAction';
+import { ExportBulkAction } from '@/core/actions/ExportBulkAction';
+import { buildReplica, ReplicateAction, ReplicateBulkAction } from '@/core/actions/ReplicateAction';
 import { ViewAction } from '@/core/actions/ViewAction';
 import { TextInput } from '@/core/forms/fields/TextInput';
 
@@ -213,6 +215,37 @@ describe('built-in actions', () => {
     });
   });
 
+  it('ReplicateAction is an icon-only copy button that does not confirm', () => {
+    expect(ReplicateAction.make().definition).toMatchObject({
+      name: 'replicate',
+      builtin: 'replicate',
+      icon: 'copy',
+      iconOnly: true,
+      tooltip: 'Duplicate',
+      replicate: { exclude: [], redirect: false },
+    });
+    expect(ReplicateAction.make().definition.confirmation).toBeUndefined();
+  });
+
+  it('ReplicateBulkAction confirms, since it writes one row per selection', () => {
+    expect(ReplicateBulkAction.make().definition).toMatchObject({
+      name: 'replicateSelected',
+      builtin: 'replicateBulk',
+      size: 'sm',
+      confirmation: {},
+    });
+  });
+
+  it('ExportBulkAction defaults to a small secondary download button', () => {
+    expect(ExportBulkAction.make().definition).toMatchObject({
+      name: 'exportSelected',
+      builtin: 'exportBulk',
+      icon: 'download',
+      size: 'sm',
+      export: {},
+    });
+  });
+
   it('keeps its subclass after a mutation', () => {
     expect(DeleteAction.make().color('warning')).toBeInstanceOf(DeleteAction);
   });
@@ -223,5 +256,84 @@ describe('built-in actions', () => {
     expect(action.definition.builtin).toBe('delete');
     expect(action.resolveLabel(record)).toBe('Remove');
     expect(action.definition.confirmation).toEqual({ heading: 'Sure?' });
+  });
+});
+
+describe('replicate options', () => {
+  it('accumulates excluded columns across calls', () => {
+    const action = ReplicateAction.make().exclude('views').exclude('slug', 'author');
+
+    expect(action.definition.replicate?.exclude).toEqual(['views', 'slug', 'author']);
+  });
+
+  it('stores a mutator and a redirect target', () => {
+    const mutator = (replica: Record<string, unknown>) => replica;
+    const action = ReplicateAction.make().beforeReplicaSaved(mutator).redirectTo('edit');
+
+    expect(action.definition.replicate).toMatchObject({ mutate: mutator, redirect: 'edit' });
+  });
+
+  it('leaves the other options alone when one is set', () => {
+    const action = ReplicateAction.make().exclude('views').redirectTo('view');
+
+    expect(action.definition.replicate).toMatchObject({ exclude: ['views'], redirect: 'view' });
+  });
+
+  it('shares the builders with the bulk variant', () => {
+    const action = ReplicateBulkAction.make().exclude('views');
+
+    expect(action).toBeInstanceOf(ReplicateBulkAction);
+    expect(action.definition.replicate?.exclude).toEqual(['views']);
+    expect(action.definition.builtin).toBe('replicateBulk');
+  });
+
+  it('is immutable, like every other builder', () => {
+    const base = ReplicateAction.make();
+
+    expect(base.exclude('views')).not.toBe(base);
+    expect(base.definition.replicate?.exclude).toEqual([]);
+  });
+});
+
+describe('buildReplica', () => {
+  const source = { id: 7, title: 'Hello', views: 42, created_at: 'x', updated_at: 'y' };
+
+  it('drops the row identity even when nothing is excluded', () => {
+    expect(buildReplica(source, [])).toEqual({ title: 'Hello', views: 42 });
+  });
+
+  it('drops the excluded columns too', () => {
+    expect(buildReplica(source, ['views'])).toEqual({ title: 'Hello' });
+  });
+
+  it('ignores an excluded column the record does not have', () => {
+    expect(buildReplica({ title: 'Hello' }, ['nope'])).toEqual({ title: 'Hello' });
+  });
+});
+
+describe('export options', () => {
+  it('stores columns, a file name and a delimiter', () => {
+    const action = ExportBulkAction.make()
+      .columns({ id: 'ID', 'role.name': 'Role' })
+      .fileName('people.csv')
+      .delimiter(';');
+
+    expect(action.definition.export).toEqual({
+      columns: { id: 'ID', 'role.name': 'Role' },
+      fileName: 'people.csv',
+      delimiter: ';',
+    });
+  });
+
+  it('accepts a file name resolved at download time', () => {
+    const resolver = () => 'people.csv';
+    expect(ExportBulkAction.make().fileName(resolver).definition.export?.fileName).toBe(resolver);
+  });
+
+  it('is immutable, like every other builder', () => {
+    const base = ExportBulkAction.make();
+
+    expect(base.delimiter(';')).not.toBe(base);
+    expect(base.definition.export).toEqual({});
   });
 });
