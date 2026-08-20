@@ -404,10 +404,64 @@ interface ActionContext {
 
 ### Built-ins
 
-`ViewAction`, `EditAction`, `DeleteAction`, `CreateAction`, `BulkAction`, `DeleteBulkAction`.
+| Action                | Where  | Does                                                       | Gate      |
+| --------------------- | ------ | ---------------------------------------------------------- | --------- |
+| `ViewAction`          | row    | Links to `/:id`                                            | `view`    |
+| `EditAction`          | row    | Links to `/:id/edit`                                       | `update`  |
+| `CreateAction`        | header | Links to `/create`                                         | `create`  |
+| `DeleteAction`        | row    | `delete` through the provider, confirms first              | `delete`  |
+| `DeleteBulkAction`    | bulk   | `deleteMany`, confirms first                               | `delete`  |
+| `ReplicateAction`     | row    | Reads the record and `create`s a copy                      | `create`  |
+| `ReplicateBulkAction` | bulk   | One copy per selected record, confirms first               | `create`  |
+| `ExportBulkAction`    | bulk   | Downloads the selection as CSV, no request                 | `viewAny` |
+| `BulkAction`          | bulk   | Base class for your own; `ctx.records` holds the selection | —         |
 
-They resolve their route, label, permission and (for deletes) the data-provider call from the
+They resolve their route, label, permission, confirmation copy and data-provider call from the
 surrounding resource, so `EditAction.make()` takes no arguments. Anything you set explicitly wins.
+
+#### Duplicating a record
+
+`ReplicateAction` re-reads the record through `getOne` — the row in the table carries only the
+columns on screen — then drops `id`, `created_at` and `updated_at` and creates what is left.
+
+| Method                                           | Description                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------- |
+| `.exclude(...columns)`                           | Further columns the copy must not carry. Accumulates across calls.  |
+| `.beforeReplicaSaved((replica, source) => data)` | Rewrites the copy before it is created; may be async.               |
+| `.redirectTo('edit' \| 'view' \| false)`         | Opens the copy afterwards. Ignored when several records are copied. |
+
+```ts
+ReplicateAction.make()
+  .exclude('views', 'author')
+  .beforeReplicaSaved((replica) => ({
+    ...replica,
+    title: `${String(replica.title)} (copy)`,
+    slug: `${String(replica.slug)}-copy`,
+    status: 'draft',
+  }))
+  .redirectTo('edit');
+```
+
+Unique columns are yours to handle — a copy that keeps a unique slug or email is rejected by the
+server, so rewrite it in `.beforeReplicaSaved()` or leave it out and let the form fill it in.
+
+#### Exporting a selection
+
+`ExportBulkAction` writes the rows already in the browser to a CSV file. Nothing is fetched, so it
+exports the selection, never the whole table.
+
+| Method                              | Description                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| `.columns({ key: 'Header' })`       | Export shape; dot-notation reaches embeds. Defaults to the table's columns. |
+| `.fileName(string \| () => string)` | Defaults to `<resource>-<yyyy-mm-dd>.csv`.                                  |
+| `.delimiter(string)`                | `;` for locales where Excel splits on semicolons.                           |
+
+```ts
+ExportBulkAction.make().columns({ id: 'ID', name: 'Name', 'role.name': 'Role' });
+```
+
+Cells that open with `=`, `+`, `-` or `@` are prefixed with an apostrophe so a spreadsheet does not
+execute them as formulas.
 
 ---
 

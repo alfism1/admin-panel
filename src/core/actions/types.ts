@@ -29,4 +29,28 @@ export interface ConfirmationOptions {
   icon?: IconSpec;
 }
 
-export type BuiltinAction = 'view' | 'edit' | 'delete' | 'create' | 'deleteBulk';
+export type BuiltinAction =
+  | 'view'
+  | 'edit'
+  | 'delete'
+  | 'create'
+  | 'deleteBulk'
+  | 'replicate'
+  | 'replicateBulk'
+  | 'exportBulk';
+
+export interface ReplicateOptions {
+  /** Dropped from the copy on top of the id and the timestamps. */
+  exclude: string[];
+  /** Last chance to change the copy before it is created. */
+  mutate?: (replica: RecordShape, source: RecordShape) => RecordShape | Promise<RecordShape>;
+  /** Where to go once the copy exists; `false` stays on the page. */
+  redirect: 'edit' | 'view' | false;
+}
+
+export interface ExportOptions {
+  /** Column key (dot-notation allowed) to CSV header. Defaults to the table's columns. */
+  columns?: Record<string, string>;
+  fileName?: string | (() => string);
+  delimiter?: string;
+}

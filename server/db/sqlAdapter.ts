@@ -1,4 +1,5 @@
 import type { Knex } from 'knex';
+import { env } from '../env';
 import { DISPLAY_COLUMNS, isSecretColumn } from '../naming';
 import type { Dialect } from './connect';
 import { introspect } from './introspect';
@@ -14,6 +15,13 @@ import {
 const MAX_PER_PAGE = 200;
 
 /**
+ * How far past the estimated end a page may sit before we stop bothering to
+ * run the query. Estimates drift between ANALYZEs, so this is deliberately
+ * generous — the guard exists to kill absurd offsets, not to trim the tail.
+ */
+const ESTIMATE_SLACK = 1.25;
+
+/**
  * Unbounded text cast for the search predicate. A cast is needed because a
  * `string` column can be a uuid, which `lower()` refuses — but it must not be
  * length-bounded: `char(255)` truncates longer columns out of the match, and on
@@ -27,10 +35,16 @@ const TEXT_CAST: Record<Dialect, string> = {
   mongodb: 'text',
 };
 
-function sanitize(row: Row): Row {
+/**
+ * Strips what must never leave the server (secrets) and what is meaningless
+ * outside it (the search vector — an index, and a large one, that `select *`
+ * would otherwise put on the wire for every row).
+ */
+function sanitize(schema: ResourceSchema, row: Row): Row {
   const output: Row = {};
   for (const [key, value] of Object.entries(row)) {
-    if (!isSecretColumn(key)) output[key] = value;
+    if (isSecretColumn(key) || key === schema.searchVector) continue;
+    output[key] = value;
   }
   return output;
 }
@@ -38,12 +52,77 @@ function sanitize(row: Row): Row {
 /** Values that knex accepts as bindings. */
 type DbValue = string | number | boolean;
 
+interface Cursor {
+  /** Value of the sort column on the last row handed out. */
+  sort: string | number | boolean | null;
+  /** Primary key of that row, breaking ties on a non-unique sort column. */
+  key: string | number;
+}
+
+function encodeCursor(cursor: Cursor): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+/** Returns null for anything that is not a cursor this server issued. */
+function decodeCursor(raw: string): Cursor | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Partial<Cursor>;
+    if (parsed.key === undefined || parsed.key === null) return null;
+    if (typeof parsed.key !== 'string' && typeof parsed.key !== 'number') return null;
+    return { sort: parsed.sort ?? null, key: parsed.key };
+  } catch {
+    return null;
+  }
+}
+
 /** Coerces a query-string value to the column's real type before it hits SQL. */
 function coerce(schema: ResourceSchema, column: string, value: string): DbValue {
   const kind = schema.columns.find((item) => item.name === column)?.kind;
   if (kind === 'boolean') return value === 'true' || value === '1';
   if (kind === 'number') return Number(value);
   return value;
+}
+
+/**
+ * Row count from table statistics rather than a scan.
+ *
+ * `count(*)` on a large table is a full index walk — 81 ms on 5M rows, paid by
+ * every list request whether or not anything was filtered, which caps list
+ * throughput no matter how much concurrency is thrown at it. The planner
+ * already keeps an approximation for its own use; reading that is O(1).
+ *
+ * Returns null when there is no usable estimate, and the caller falls back to
+ * an exact count.
+ */
+async function estimateRows(db: Knex, dialect: Dialect, table: string): Promise<number | null> {
+  try {
+    if (dialect === 'postgres') {
+      const result = (await db.raw(
+        'select reltuples::bigint as estimate from pg_class where oid = to_regclass(?)',
+        [table],
+      )) as {
+        rows: Array<{ estimate: string | number | null }>;
+      };
+      const value = Number(result.rows[0]?.estimate ?? -1);
+      // -1 means the table has never been analysed, so there is nothing to read.
+      return value >= 0 ? value : null;
+    }
+
+    if (dialect === 'mysql') {
+      const result = (await db.raw(
+        'select table_rows as estimate from information_schema.tables where table_schema = database() and table_name = ?',
+        [table],
+      )) as Array<Array<{ estimate: string | number | null }>>;
+      const value = Number(result[0]?.[0]?.estimate ?? -1);
+      return value >= 0 ? value : null;
+    }
+  } catch {
+    // Statistics views are permission-gated on some managed databases.
+    return null;
+  }
+
+  // SQLite and SQL Server have no equally cheap read; exact counts stay.
+  return null;
 }
 
 export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<DatabaseAdapter> {
@@ -83,7 +162,22 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
       }
     }
 
-    if (params.search && schema.searchable.length > 0) {
+    if (!params.search) return;
+
+    // A GIN-indexed tsvector turns the whole predicate into one index lookup,
+    // where the `LIKE` chain below has to be evaluated per row per column.
+    // `websearch_to_tsquery` is the forgiving parser: it never raises on user
+    // input, which `to_tsquery` does on so much as a stray operator.
+    if (schema.searchVector && dialect === 'postgres') {
+      query.whereRaw(`?? @@ websearch_to_tsquery(?, ?)`, [
+        schema.searchVector,
+        env.search.textConfig,
+        params.search,
+      ]);
+      return;
+    }
+
+    if (schema.searchable.length > 0) {
       const needle = `%${params.search.toLowerCase()}%`;
       const cast = TEXT_CAST[dialect];
       query.where((builder) => {
@@ -165,18 +259,7 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
       const schema = schemaOf(resource);
       const perPage = Math.min(Math.max(1, params.perPage), MAX_PER_PAGE);
       const page = Math.max(1, params.page);
-
-      const countQuery = db(schema.name);
-      applyFilters(countQuery, schema, params);
-      const [{ total }] = (await countQuery.count({ total: '*' })) as Array<{
-        total: number | string;
-      }>;
-
-      // A page past the end has no rows by definition, and the offset query to
-      // prove it costs a full index walk — `?page=500003` on 5M rows spent ~15 s
-      // to return nothing. The count already tells us where the data stops.
-      const lastPage = Math.max(1, Math.ceil(Number(total) / perPage));
-      if (page > lastPage) return { rows: [], total: Number(total) };
+      const offset = (page - 1) * perPage;
 
       const sortColumn =
         params.sort && hasColumn(schema, params.sort.column)
@@ -185,30 +268,173 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
       const sortDirection =
         params.sort && hasColumn(schema, params.sort.column) ? params.sort.direction : 'desc';
 
+      // An unreadable cursor is ignored rather than rejected: it is a position
+      // hint, and the worst case of dropping it is starting from the top.
+      const cursor = params.cursor ? decodeCursor(params.cursor) : null;
+
       // Late row lookup: page over the primary key alone, then fetch the wide
       // rows for the ids that survive. A plain `select * ... offset N` makes the
       // planner heap-fetch every skipped row before discarding it; keeping the
       // inner scan index-only took offset 2.5M from 19.5 s to 1.2 s.
-      const keys = db(schema.name);
-      applyFilters(keys, schema, params);
-      keys
-        .orderBy(sortColumn, sortDirection)
-        .limit(perPage)
-        .offset((page - 1) * perPage)
-        .select(schema.primaryKey);
+      /**
+       * `fenced` materialises the matches before sorting them.
+       *
+       * With a plain `order by id desc limit 25` the planner walks the primary
+       * key backwards hoping to fill the page early. For a term matching 50 of
+       * 5M rows it reads most of the heap instead — 8 s. Bounding the inner
+       * query first forces the index path and takes that to 3 ms. It is only
+       * correct once the match count is known to fit inside the bound, and only
+       * a win when it is small: for a term matching millions the same shape
+       * costs 4.9 s where the plain one costs 1 ms.
+       */
+      const fetchPage = async (fenced: boolean): Promise<Row[]> => {
+        let keys = db(schema.name);
+        applyFilters(keys, schema, params);
+        // The outer query sorts on `sortColumn`, so the fenced inner one has to
+        // carry it through as well as the key it is joined back on.
+        const inner =
+          sortColumn === schema.primaryKey ? [schema.primaryKey] : [schema.primaryKey, sortColumn];
+        keys.select(fenced || cursor ? inner : [schema.primaryKey]);
 
-      const rows = (await db(schema.name)
-        .join(
-          keys.as('page_keys'),
-          `page_keys.${schema.primaryKey}`,
-          `${schema.name}.${schema.primaryKey}`,
-        )
-        .orderBy(`${schema.name}.${sortColumn}`, sortDirection)
-        .select(`${schema.name}.*`)) as Row[];
+        if (cursor) {
+          /**
+           * Seek instead of skip. `offset N` makes the database walk and throw
+           * away N rows; this asks for "the rows after that one", which an index
+           * on (sort, key) answers by descending straight to the right place.
+           *
+           * Written out rather than as a row-value comparison `(a,b) < (x,y)`,
+           * which SQL Server does not support.
+           */
+          const op = sortDirection === 'desc' ? '<' : '>';
+          keys.where((builder) => {
+            if (sortColumn === schema.primaryKey) {
+              void builder.where(schema.primaryKey, op, cursor.key as DbValue);
+              return;
+            }
+            void builder
+              .where(sortColumn, op, cursor.sort as DbValue)
+              .orWhere((tie) =>
+                tie
+                  .where(sortColumn, cursor.sort as DbValue)
+                  .andWhere(schema.primaryKey, op, cursor.key as DbValue),
+              );
+          });
+        }
+
+        if (fenced) {
+          keys.limit(env.list.countCap + 1);
+          keys = db.select(inner).from(keys.as('matches'));
+        }
+
+        keys.orderBy(sortColumn, sortDirection);
+        // Ties on a non-unique sort column would otherwise let a row appear on
+        // two pages or none, which matters far more when seeking than skipping.
+        if (sortColumn !== schema.primaryKey) keys.orderBy(schema.primaryKey, sortDirection);
+        keys.limit(perPage).offset(cursor ? 0 : offset);
+
+        const page = db(schema.name)
+          .join(
+            keys.as('page_keys'),
+            `page_keys.${schema.primaryKey}`,
+            `${schema.name}.${schema.primaryKey}`,
+          )
+          .orderBy(`${schema.name}.${sortColumn}`, sortDirection);
+
+        if (sortColumn !== schema.primaryKey) {
+          page.orderBy(`${schema.name}.${schema.primaryKey}`, sortDirection);
+        }
+
+        return (await page.select(`${schema.name}.*`)) as Row[];
+      };
+
+      /**
+       * Counts matches, giving up once `cap` of them are known to exist.
+       *
+       * `exact: false` means "at least cap" — the scan stopped early. Counting
+       * a broad filter to the last row was a full table scan (5.5 s for a term
+       * matching 1M rows) to produce a number no one reads past the first page.
+       */
+      const cappedCount = async (cap: number): Promise<{ total: number; exact: boolean }> => {
+        const matches = db(schema.name).select(db.raw('1'));
+        applyFilters(matches, schema, params);
+
+        if (cap <= 0) {
+          const [{ total }] = (await matches.clone().clearSelect().count({ total: '*' })) as Array<{
+            total: number | string;
+          }>;
+          return { total: Number(total), exact: true };
+        }
+
+        matches.limit(cap + 1);
+        const [{ total }] = (await db.count({ total: '*' }).from(matches.as('capped'))) as Array<{
+          total: number | string;
+        }>;
+
+        const value = Number(total);
+        return value > cap ? { total: cap, exact: false } : { total: value, exact: true };
+      };
+
+      const narrowed = Object.keys(params.filters).length > 0 || Boolean(params.search);
+      const threshold = env.list.estimateCountAbove;
+
+      // A filtered count has to be exact — it is the answer to a question the
+      // user asked. An unfiltered one is just "how big is this table", which is
+      // what statistics are for.
+      /** Marker for the last row of this page, or nothing if the page is short. */
+      const nextCursorFor = (rows: Row[]): { nextCursor?: string } => {
+        if (rows.length < perPage) return {};
+        const last = rows[rows.length - 1];
+        const key = last[schema.primaryKey];
+        if (key === null || key === undefined) return {};
+        return {
+          nextCursor: encodeCursor({
+            sort: (last[sortColumn] ?? null) as Cursor['sort'],
+            key: key as Cursor['key'],
+          }),
+        };
+      };
+
+      if (!narrowed && threshold > 0) {
+        const estimate = await estimateRows(db, dialect, schema.name);
+
+        if (estimate !== null && estimate > threshold) {
+          // Far enough past the end that no drift explains it: `?page=500003`
+          // on 5M rows spent ~15 s walking the index to return nothing. A cursor
+          // does not skip, so it is never in this position.
+          if (!cursor && offset > estimate * ESTIMATE_SLACK + perPage) {
+            return { rows: [], total: estimate };
+          }
+
+          const rows = await fetchPage(false);
+          return {
+            rows: (await embedRelations(schema, rows)).map((row) => sanitize(schema, row)),
+            // Never report a total smaller than what has already been handed out.
+            total: Math.max(estimate, offset + rows.length),
+            approximate: true,
+            ...nextCursorFor(rows),
+          };
+        }
+      }
+
+      // The count decides both whether the page query is worth running and
+      // which shape it should take, so it goes first rather than concurrently.
+      const { total, exact } = await cappedCount(narrowed ? env.list.countCap : 0);
+
+      if (exact && !cursor) {
+        const lastPage = Math.max(1, Math.ceil(total / perPage));
+        if (page > lastPage) return { rows: [], total };
+      }
+
+      // Fencing is only safe once the matches are known to fit inside the cap,
+      // and only pays off when there are few of them — which is exactly the
+      // case an exact capped count identifies.
+      const rows = await fetchPage(exact && narrowed && offset + perPage <= env.list.countCap);
 
       return {
-        rows: (await embedRelations(schema, rows)).map(sanitize),
-        total: Number(total),
+        rows: (await embedRelations(schema, rows)).map((row) => sanitize(schema, row)),
+        total: exact ? total : Math.max(total, offset + rows.length),
+        ...(exact ? {} : { approximate: true }),
+        ...nextCursorFor(rows),
       };
     },
 
@@ -217,7 +443,7 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
       const row = (await db(schema.name).where(schema.primaryKey, id).first()) as Row | undefined;
       if (!row) return null;
       const [embedded] = await embedRelations(schema, [row]);
-      return sanitize(embedded);
+      return sanitize(schema, embedded);
     },
 
     async findBy(resource, column, value) {
@@ -236,13 +462,13 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
       if (dialect === 'postgres' || dialect === 'mssql') {
         const [created] = (await db(schema.name).insert(payload).returning('*')) as Row[];
         const [embedded] = await embedRelations(schema, [created]);
-        return sanitize(embedded);
+        return sanitize(schema, embedded);
       }
 
       const [id] = await db(schema.name).insert(payload);
       const created = await findRow(schema, String(payload[schema.primaryKey] ?? id));
       const [embedded] = await embedRelations(schema, [created]);
-      return sanitize(embedded);
+      return sanitize(schema, embedded);
     },
 
     async update(resource, id, data) {
@@ -255,7 +481,7 @@ export async function createSqlAdapter(db: Knex, dialect: Dialect): Promise<Data
       }
 
       const [embedded] = await embedRelations(schema, [await findRow(schema, id)]);
-      return sanitize(embedded);
+      return sanitize(schema, embedded);
     },
 
     async remove(resource, id) {

@@ -73,6 +73,46 @@ export function resolveBuiltin(
         successMessage: `${labels.plural} deleted.`,
       };
 
+    // A copy is reversible, so this one only generates confirmation copy when
+    // the caller asked for a confirmation at all.
+    case 'replicate':
+      return {
+        label: 'Duplicate',
+        permission: permissions.create,
+        ...(config.confirmation
+          ? {
+              confirmation: {
+                heading: `Duplicate this ${labels.singular.toLowerCase()}?`,
+                description: `A copy of "${resource.recordTitle(record)}" will be created.`,
+                confirmLabel: 'Duplicate',
+                ...config.confirmation,
+              },
+            }
+          : {}),
+        successMessage: `${labels.singular} duplicated.`,
+      };
+
+    case 'replicateBulk':
+      return {
+        label: 'Duplicate selected',
+        permission: permissions.create,
+        confirmation: {
+          heading: `Duplicate the selected ${labels.plural.toLowerCase()}?`,
+          description: `One copy is created for each selected ${labels.singular.toLowerCase()}.`,
+          confirmLabel: 'Duplicate',
+          ...(config.confirmation || {}),
+        },
+        successMessage: `${labels.plural} duplicated.`,
+      };
+
+    // Reading rows the caller already has on screen, so `viewAny` is the gate.
+    case 'exportBulk':
+      return {
+        label: 'Export selected',
+        permission: permissions.viewAny,
+        successMessage: `${labels.plural} exported.`,
+      };
+
     default:
       return {};
   }

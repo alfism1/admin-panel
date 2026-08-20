@@ -1,6 +1,8 @@
 import { DeleteBulkAction, BulkAction } from '@/core/actions/BulkAction';
 import { DeleteAction } from '@/core/actions/DeleteAction';
 import { EditAction } from '@/core/actions/EditAction';
+import { ExportBulkAction } from '@/core/actions/ExportBulkAction';
+import { ReplicateAction } from '@/core/actions/ReplicateAction';
 import { ViewAction } from '@/core/actions/ViewAction';
 import { apiClient } from '@/core/data/apiClient';
 import { DatePicker } from '@/core/forms/fields/DatePicker';
@@ -237,7 +239,24 @@ export const PostResource = defineResource({
       DateRangeFilter.make('created_at').label('Created'),
     ],
 
-    actions: [ViewAction.make(), EditAction.make(), DeleteAction.make()],
+    actions: [
+      ViewAction.make(),
+      EditAction.make(),
+      // A copy starts as an unpublished draft with its own permalink, so it can
+      // never collide with the post it came from.
+      ReplicateAction.make()
+        .exclude('views', 'author')
+        .beforeReplicaSaved((replica) => ({
+          ...replica,
+          title: `${String(replica.title)} (copy)`,
+          slug: `${String(replica.slug)}-copy`,
+          status: 'draft',
+          published_at: null,
+          is_featured: false,
+        }))
+        .redirectTo('edit'),
+      DeleteAction.make(),
+    ],
 
     bulkActions: [
       BulkAction.make('publish')
@@ -257,6 +276,7 @@ export const PostResource = defineResource({
           );
         })
         .successNotification('Selected posts are now published.'),
+      ExportBulkAction.make(),
       DeleteBulkAction.make(),
     ],
 

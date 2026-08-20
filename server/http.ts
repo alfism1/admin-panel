@@ -1,6 +1,11 @@
+import { brotliCompress, gzip } from 'node:zlib';
+import { promisify } from 'node:util';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { env } from './env';
 import { HttpError } from './db/types';
+
+const gzipAsync = promisify(gzip);
+const brotliAsync = promisify(brotliCompress);
 
 export interface Context {
   method: string;
@@ -9,6 +14,8 @@ export interface Context {
   query: URLSearchParams;
   body: Record<string, unknown>;
   headers: IncomingMessage['headers'];
+  /** Caller address, used to key rate limits. */
+  ip: string;
 }
 
 type Handler = (ctx: Context) => Promise<unknown> | unknown;
@@ -94,21 +101,99 @@ function applyCors(request: IncomingMessage, response: ServerResponse): void {
   response.setHeader('Vary', 'Origin');
 }
 
-function send(response: ServerResponse, status: number, payload: unknown): void {
-  const body = payload === undefined ? '' : JSON.stringify(payload);
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+/** Below this, framing and CPU cost more than the bytes saved. */
+const MIN_COMPRESS_BYTES = 1024;
+
+function securityHeaders(response: ServerResponse): void {
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('X-Frame-Options', 'DENY');
+  response.setHeader('Referrer-Policy', 'no-referrer');
+  // This API only ever answers JSON, so nothing it returns should be treated
+  // as a document with privileges.
+  response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  response.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  // Only meaningful over TLS, and actively unhelpful on a local http listener.
+  if (env.isProduction) {
+    response.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+}
+
+async function send(
+  request: IncomingMessage,
+  response: ServerResponse,
+  status: number,
+  payload: unknown,
+  retryAfter?: number,
+): Promise<void> {
+  const json = payload === undefined ? '' : JSON.stringify(payload);
+  const raw = Buffer.from(json, 'utf8');
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json; charset=utf-8',
+  };
+  if (retryAfter !== undefined) headers['Retry-After'] = String(retryAfter);
+
+  const accepted = String(request.headers['accept-encoding'] ?? '');
+  let body = raw;
+
+  if (raw.length >= MIN_COMPRESS_BYTES) {
+    // A list page is mostly repeated JSON keys, so this is a large win: the
+    // 80 kB default page compresses to a few kB.
+    if (/\bbr\b/.test(accepted)) {
+      body = await brotliAsync(raw);
+      headers['Content-Encoding'] = 'br';
+    } else if (/\bgzip\b/.test(accepted)) {
+      body = await gzipAsync(raw);
+      headers['Content-Encoding'] = 'gzip';
+    }
+  }
+
+  headers['Content-Length'] = String(body.length);
+  if (headers['Content-Encoding']) headers['Vary'] = 'Origin, Accept-Encoding';
+
+  response.writeHead(status, headers);
   response.end(body);
 }
 
 function log(method: string, path: string, status: number, startedAt: number): void {
-  if (env.isProduction) return;
   const duration = Math.round(performance.now() - startedAt);
+
+  // Structured in production so a log shipper can index it, human-readable in
+  // development. Previously production logged nothing at all, which left no way
+  // to see latency or error rate from a running instance.
+  if (env.isProduction) {
+    if (status < 400 && duration < env.slowRequestMs) return;
+    console.log(
+      JSON.stringify({
+        level: status >= 500 ? 'error' : 'warn',
+        msg: status >= 400 ? 'request failed' : 'slow request',
+        method,
+        path,
+        status,
+        duration_ms: duration,
+        time: new Date().toISOString(),
+      }),
+    );
+    return;
+  }
+
   console.log(`  ${String(status).padEnd(3)} ${method.padEnd(6)} ${path}  ${duration}ms`);
+}
+
+/** Client address, honouring `X-Forwarded-For` only when TRUST_PROXY says to. */
+export function clientIp(request: IncomingMessage): string {
+  if (env.trustProxy) {
+    const forwarded = request.headers['x-forwarded-for'];
+    const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return request.socket.remoteAddress ?? 'unknown';
 }
 
 export function createRequestListener(router: Router) {
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     applyCors(request, response);
+    securityHeaders(response);
 
     if (request.method === 'OPTIONS') {
       response.writeHead(204).end();
@@ -132,24 +217,34 @@ export function createRequestListener(router: Router) {
           ? await readBody(request)
           : {},
         headers: request.headers,
+        ip: clientIp(request),
       };
 
       const result = await matched.handler({ ...ctx, ...{ params: matched.params } } as Context);
       log(ctx.method, url.pathname + url.search, matched.status, startedAt);
-      send(response, matched.status, result);
+      await send(request, response, matched.status, result);
     } catch (error) {
       if (error instanceof HttpError) {
         log(request.method ?? 'GET', url.pathname, error.status, startedAt);
-        send(response, error.status, {
-          message: error.message,
-          ...(error.errors ? { errors: error.errors } : {}),
-        });
+        await send(
+          request,
+          response,
+          error.status,
+          {
+            message: error.message,
+            ...(error.errors ? { errors: error.errors } : {}),
+          },
+          error.retryAfter,
+        );
         return;
       }
 
+      log(request.method ?? 'GET', url.pathname, 500, startedAt);
       const message = error instanceof Error ? error.message : 'Internal server error.';
       console.error('[api]', error);
-      send(response, 500, { message: env.isProduction ? 'Internal server error.' : message });
+      await send(request, response, 500, {
+        message: env.isProduction ? 'Internal server error.' : message,
+      });
     }
   };
 }

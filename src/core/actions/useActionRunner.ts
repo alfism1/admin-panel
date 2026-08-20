@@ -9,6 +9,8 @@ import type { FormValues } from '@/core/forms/types';
 import { useResourceContext } from '@/core/resources/ResourceContext';
 import { notify } from '@/core/ui/notify';
 import type { Action } from './Action';
+import { runExport } from './ExportBulkAction';
+import { runReplicate } from './ReplicateAction';
 import { resolveBuiltin } from './resolveAction';
 import type { ActionContext } from './types';
 
@@ -56,6 +58,13 @@ export function useActionRunner(action: Action) {
           resource.name,
           records.map((item) => String(item.id)),
         );
+      } else if (
+        (config.builtin === 'replicate' || config.builtin === 'replicateBulk') &&
+        resource
+      ) {
+        await runReplicate(resource, record ? [record] : records, config.replicate, navigate);
+      } else if (config.builtin === 'exportBulk' && resource) {
+        runExport(resource, record ? [record] : records, config.export);
       }
 
       await config.handler?.(ctx);

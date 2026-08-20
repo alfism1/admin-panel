@@ -1,0 +1,22 @@
+{
+  "name": "create-admin-panel",
+  "version": "0.1.0",
+  "description": "Scaffold a Filament-style React admin panel wired to your own database.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["admin-panel", "react", "filament", "scaffold", "crud", "create-app"],
+  "bin": {
+    "create-admin-panel": "index.js"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "files": ["index.js", "src", "template", "README.md"],
+  "scripts": {
+    "build:template": "node scripts/build-template.mjs",
+    "prepack": "node scripts/build-template.mjs"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0"
+  }
+}

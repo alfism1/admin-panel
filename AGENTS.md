@@ -49,19 +49,47 @@ these four plus `pnpm build` on every pull request into `master` — see
 
 ## Tests
 
-Vitest + Testing Library, jsdom environment. Tests live in `tests/`, mirroring `src/`, so that
-`src/core/` stays a closed layer with no test files inside it. `tsconfig.test.json` puts them in the
-`tsc -b` graph, so a broken test is also a typecheck failure.
+Vitest + Testing Library. Tests live in `tests/`, mirroring `src/`, so that `src/core/` stays a
+closed layer with no test files inside it. `tsconfig.test.json` puts them in the `tsc -b` graph, so a
+broken test is also a typecheck failure.
+
+`vitest.config.ts` declares **two projects**, because the two halves need different runtimes:
+
+| Project  | Environment | Files                    |
+| -------- | ----------- | ------------------------ |
+| `web`    | jsdom       | everything but the below |
+| `server` | node        | `tests/server/**`        |
+
+`pnpm test` runs both; `pnpm vitest run --project server` is the fast loop while working on `server/`
+— about a second and a half, against 25-odd for jsdom setup. Coverage thresholds still apply to
+`src/` only, so `server/` is covered by tests but not by a ratchet.
 
 ```text
 tests/
-├── setup.ts        jsdom polyfills Radix and react-day-picker need
+├── setup.ts        jsdom polyfills Radix and react-day-picker need (web project only)
 ├── helpers/        renderWithProviders (router + query + auth), makeFieldContext,
 │                   makeDataProvider (every method a spy)
 ├── App.test.tsx    composition root: real AuthProvider, real route tree
 ├── core/           mirrors src/core/
 ├── layouts/ · pages/ · resources/ · lib/
+└── server/         node environment; mirrors server/
+    └── helpers/
+        ├── env.ts     withServerEnv — stub process.env, then re-import the graph
+        ├── router.ts  makeDb / makeAuth / dispatch, for driving routes without a listener
+        ├── http.ts    makeRequest / makeResponse over node streams
+        └── sqlite.ts  createFixture — a real in-memory database for the SQL adapter
 ```
+
+The server side leans on two things worth knowing before adding to it:
+
+- **`sqlAdapter` is tested against a real database**, not against generated SQL. `createFixture`
+  stands up `better-sqlite3` in memory, creates `roles`/`users`/`posts` with real foreign keys, and
+  hands back a live adapter. The guards that matter there — the column allow-list between a query
+  string and `whereRaw`, the per-page clamp, the secret-column strip — only mean anything if the
+  query runs.
+- **`routes.test.ts` counts the route table.** `registeredRouteCount` reaches past `private` so that
+  adding an endpoint without adding a probe fails the suite. That is the prompt to decide whether
+  the new route needs `gate`; do not just bump the number.
 
 What to reach for:
 
@@ -80,8 +108,17 @@ Traps worth knowing before you write a new test:
 
 - Tests named `KNOWN BUG` / `KNOWN LIMITATION` pin behaviour that is wrong but currently shipped,
   with the fix written in the comment above them. Fixing the source means flipping the assertion in
-  the same commit — that is the point. None are open right now; the convention stands for the next
-  one found.
+  the same commit — that is the point. Six are open, all in `server/`:
+
+  | Where              | What                                                                         |
+  | ------------------ | ---------------------------------------------------------------------------- |
+  | `naming.ts`        | `pluralize` is not idempotent; its own `s$` guard is unreachable dead code   |
+  | `naming.ts`        | `singularize` mangles a singular table ending in `s` (`status` → `statu`)    |
+  | `db/sqlAdapter.ts` | an embed key is omitted entirely when no row in the batch has the relation   |
+  | `auth.ts`          | the user cache stores results, not promises, so a cold burst still stampedes |
+  | `env.ts`           | `flag()` reads `RATE_LIMIT_ENABLED=1` as _off_, silently                     |
+  | `permissions.ts`   | client and server disagree on the empty permission — deliberate, documented  |
+
 - Coverage is at 100% on every metric and `vitest.config.ts` enforces it. Code a test genuinely
   cannot reach carries `/* v8 ignore next */` with the reason on the line above; reach for that only
   after establishing that no public API can drive the branch.
@@ -103,6 +140,19 @@ Traps worth knowing before you write a new test:
   not see it. Close the overlay first, or query inside it.
 - A required field's label reads `Name*`, so `getByLabelText('Name')` misses it — use
   `getByRole('textbox', { name: 'Name' })`, which respects the `aria-hidden` asterisk.
+
+And in `tests/server/` specifically:
+
+- `server/env.ts` reads `process.env` once at module load, and `dotenv` fills the rest from whatever
+  `.env` the machine has. A test that cares about a variable must set it _and_ re-import through
+  `withServerEnv`, including the variables it wants absent — pass `''` for "unset". Otherwise a line
+  in someone's local `.env` decides the assertion.
+- `withServerEnv` goes through `vi.resetModules()`, so the module it hands back carries a **different
+  `HttpError` class object** than a static import. Assert `rejects.toMatchObject({ status: 404 })`,
+  never `toBeInstanceOf`.
+- `granted` in `server/permissions.ts` and `createPermissionChecker` in `src/core/auth/can.ts` are
+  separate implementations of the same rules. `tests/server/permissions.test.ts` runs a shared table
+  through both; extend that table rather than testing either alone.
 
 ## Repository layout
 
@@ -207,9 +257,27 @@ Server-only: `DATABASE_URL`, `API_PORT`, `API_ORIGIN`, `JWT_SECRET`, `JWT_ACCESS
 ## Security notes
 
 Client-side permission checks (`<Can>`, `.authorize()`) are **UX only, never a security boundary**.
-The server is the sole authority. When adding an endpoint in `server/routes.ts`, call
-`requireAuth()` — the API applies authentication, not per-table authorization, so do not assume a
-route is protected because the UI hides it.
+The server is the sole authority.
+
+Data routes in `server/routes.ts` go through `gate(ctx, resource, ability)`, which authenticates and
+then checks `<singular>.<ability>` (`post.update`, `user.delete`) against the caller's permissions —
+the same catalogue `permissionsFor` publishes and the same wildcard rules the client uses, but
+implemented separately in `server/permissions.ts` because this side is the boundary. **A new data
+endpoint must call `gate`, not `requireAuth`**; `requireAuth` alone proves only who the caller is,
+which is what let any valid token reach any exposed table before.
+
+Row-level ownership is opt-in through `OWNED_TABLES=posts:author_id` and lives in
+`server/ownership.ts`. Where it is configured, a caller reaches only their own rows unless they hold
+`<resource>.<action>.any` — the list is scoped by a filter merged last so a hand-written
+`filter[author_id]` cannot widen it, writes cannot reassign the owner column, and a foreign row
+answers **404 rather than 403** so the error itself does not confirm the row exists. Field-level
+permissions are still not enforced.
+
+Rate limits (`server/rateLimit.ts`) default to counters in process memory, so behind N replicas the
+real budget is N times the configured one. `RateLimitStore` is the seam: implement it against Redis
+(`INCR` + `PEXPIRE`) and pass it to `createRateLimiter` for one shared budget — no change to this
+file and no Redis dependency for anyone who does not need it. Limits are on by default under
+`NODE_ENV=production`.
 
 ## Documentation
 
@@ -219,3 +287,29 @@ route is protected because the UI hides it.
 - [`docs/database.md`](docs/database.md) — connecting a real database
 - [`docs/performance.md`](docs/performance.md) — measured behaviour at 5M rows, and what still hurts
 - [`docs/recipes.md`](docs/recipes.md) — custom fields, columns, providers, pages
+
+## Publishing the scaffolder
+
+`packages/create-admin-panel/` publishes this repo as `npm create admin-panel@latest`. It is a
+standalone package with its own `node_modules` — the root install does not reach it.
+
+**This repo is the template.** `scripts/build-template.mjs` copies the tree into
+`packages/create-admin-panel/template/` at pack time; the directory is git-ignored so the two cannot
+drift. `pnpm build:template` rebuilds it, and CI runs it on every PR.
+
+The split that matters:
+
+- **Pack time** (`build-template.mjs`) — every rewrite that does _not_ depend on a user's answer.
+  These use anchored string replacements that throw unless they match exactly once, so a change to
+  `vitest.config.ts`, `src/main.tsx`, `server/db/index.ts` or the `format` script fails the build
+  here rather than silently producing a broken scaffold on a stranger's machine.
+- **Run time** (`src/template.js`) — only what varies by answer: project name, `.env`, driver
+  pruning, which resources ship.
+
+So: **if you edit one of those four files and CI fails on "build the scaffolder template", the fix
+is to update the anchor in `build-template.mjs`** — not to loosen the check.
+
+Two files import a database driver by name (`server/db/mongoAdapter.ts` → `mongodb`,
+`server/cli/seed-bulk.ts` → `pg`). A generated project prunes every driver it did not choose, so
+those files are removed too. Adding a third such import means teaching `applyDatabaseVariant` about
+it, or the generated project will not typecheck.

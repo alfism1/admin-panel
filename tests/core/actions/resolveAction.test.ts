@@ -4,6 +4,8 @@ import { CreateAction } from '@/core/actions/CreateAction';
 import { DeleteAction } from '@/core/actions/DeleteAction';
 import { DeleteBulkAction } from '@/core/actions/BulkAction';
 import { EditAction } from '@/core/actions/EditAction';
+import { ExportBulkAction } from '@/core/actions/ExportBulkAction';
+import { ReplicateAction, ReplicateBulkAction } from '@/core/actions/ReplicateAction';
 import { ViewAction } from '@/core/actions/ViewAction';
 import { resolveBuiltin } from '@/core/actions/resolveAction';
 import type { BuiltinAction } from '@/core/actions/types';
@@ -113,6 +115,91 @@ describe('deleteBulk', () => {
 
   it('uses the delete permission', () => {
     expect(resolved.permission).toBe('post.delete');
+  });
+});
+
+describe('replicate', () => {
+  const resolved = resolveBuiltin(ReplicateAction.make().definition, resource, record);
+
+  it('creates a row, so it is gated on the create permission', () => {
+    expect(resolved.permission).toBe('post.create');
+    expect(resolved.label).toBe('Duplicate');
+    expect(resolved.successMessage).toBe('Post duplicated.');
+  });
+
+  it('generates no confirmation copy, because a copy is reversible', () => {
+    expect(resolved.confirmation).toBeUndefined();
+  });
+
+  it('generates copy naming the record once a confirmation is asked for', () => {
+    const asked = resolveBuiltin(
+      ReplicateAction.make().requiresConfirmation().definition,
+      resource,
+      record,
+    );
+
+    expect(asked.confirmation).toMatchObject({
+      heading: 'Duplicate this post?',
+      confirmLabel: 'Duplicate',
+    });
+    expect((asked.confirmation as { description: string }).description).toContain('Hello world');
+  });
+
+  it('lets an explicit confirmation override the generated copy', () => {
+    const custom = ReplicateAction.make().requiresConfirmation({ heading: 'Copy it?' });
+
+    expect(resolveBuiltin(custom.definition, resource, record).confirmation).toMatchObject({
+      heading: 'Copy it?',
+      confirmLabel: 'Duplicate',
+    });
+  });
+
+  it('opting out of confirmation leaves nothing for the renderer to show', () => {
+    const off = ReplicateAction.make().requiresConfirmation(false);
+
+    expect(resolveBuiltin(off.definition, resource, record).confirmation).toBeUndefined();
+  });
+});
+
+describe('replicateBulk', () => {
+  const resolved = resolveBuiltin(ReplicateBulkAction.make().definition, resource, null);
+
+  it('always confirms, since it writes one row per selected record', () => {
+    expect(resolved.confirmation).toMatchObject({
+      heading: 'Duplicate the selected posts?',
+      confirmLabel: 'Duplicate',
+    });
+  });
+
+  it('uses the plural label and the create permission', () => {
+    expect(resolved.label).toBe('Duplicate selected');
+    expect(resolved.permission).toBe('post.create');
+    expect(resolved.successMessage).toBe('Posts duplicated.');
+  });
+
+  it('generates its copy even with no explicit confirmation', () => {
+    const config = { ...ReplicateBulkAction.make().definition, confirmation: undefined };
+
+    expect(resolveBuiltin(config, resource, null).confirmation).toMatchObject({
+      heading: 'Duplicate the selected posts?',
+    });
+  });
+});
+
+describe('exportBulk', () => {
+  const resolved = resolveBuiltin(ExportBulkAction.make().definition, resource, null);
+
+  it('reads rows already on screen, so viewAny is the gate', () => {
+    expect(resolved.permission).toBe('post.viewAny');
+  });
+
+  it('names itself for the selection and reports in the plural', () => {
+    expect(resolved.label).toBe('Export selected');
+    expect(resolved.successMessage).toBe('Posts exported.');
+  });
+
+  it('never confirms', () => {
+    expect(resolved.confirmation).toBeUndefined();
   });
 });
 

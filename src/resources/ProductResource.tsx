@@ -1,6 +1,8 @@
 import { DeleteBulkAction } from '@/core/actions/BulkAction';
 import { DeleteAction } from '@/core/actions/DeleteAction';
 import { EditAction } from '@/core/actions/EditAction';
+import { ExportBulkAction } from '@/core/actions/ExportBulkAction';
+import { ReplicateAction, ReplicateBulkAction } from '@/core/actions/ReplicateAction';
 import { ViewAction } from '@/core/actions/ViewAction';
 import { Select } from '@/core/forms/fields/Select';
 import { TextInput } from '@/core/forms/fields/TextInput';
@@ -81,8 +83,13 @@ export const ProductResource = defineResource({
       TernaryFilter.make('is_featured').label('Featured'),
     ],
 
-    actions: [ViewAction.make(), EditAction.make(), DeleteAction.make()],
-    bulkActions: [DeleteBulkAction.make()],
+    actions: [
+      ViewAction.make(),
+      EditAction.make(),
+      ReplicateAction.make().redirectTo('edit'),
+      DeleteAction.make(),
+    ],
+    bulkActions: [ReplicateBulkAction.make(), ExportBulkAction.make(), DeleteBulkAction.make()],
 
     defaultSort: { column: 'created_at', direction: 'desc' },
     emptyState: { heading: 'No products yet' },

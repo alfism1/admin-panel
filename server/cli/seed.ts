@@ -1,4 +1,4 @@
-import bcrypt from 'bcryptjs';
+import { hash } from '@node-rs/bcrypt';
 import type { Knex } from 'knex';
 import { detectDialect } from '../db/connect';
 import { openMigrations, runLatest } from '../db/migrate';
@@ -71,7 +71,7 @@ async function seedRows(db: Knex): Promise<void> {
   }
 
   if ((await db('users').count({ total: '*' }).first())?.total == 0) {
-    const password = await bcrypt.hash('password', 10);
+    const password = await hash('password', 10);
     // The three named accounts stay active — they are the documented logins.
     const users = [
       {

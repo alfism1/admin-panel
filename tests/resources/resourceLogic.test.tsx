@@ -218,6 +218,40 @@ describe('reset password action', () => {
   });
 });
 
+describe('post duplication', () => {
+  const mutate = () => {
+    const options = action(byName.posts, 'replicate').definition.replicate;
+    if (!options?.mutate) throw new Error('The post replicate action declares no mutator');
+    return options.mutate;
+  };
+
+  it('marks the copy as a draft with its own title and permalink', async () => {
+    const replica = await mutate()(
+      { title: 'Hello', slug: 'hello', status: 'published', is_featured: true },
+      {},
+    );
+
+    expect(replica).toEqual({
+      title: 'Hello (copy)',
+      slug: 'hello-copy',
+      status: 'draft',
+      published_at: null,
+      is_featured: false,
+    });
+  });
+
+  it('never carries the view count or the embedded author over', () => {
+    expect(action(byName.posts, 'replicate').definition.replicate?.exclude).toEqual([
+      'views',
+      'author',
+    ]);
+  });
+
+  it('opens the copy for editing, since it still needs a title', () => {
+    expect(action(byName.posts, 'replicate').definition.replicate?.redirect).toBe('edit');
+  });
+});
+
 describe('custom cell components', () => {
   it('every column declaring a custom cell renders without throwing', () => {
     for (const resource of resources) {

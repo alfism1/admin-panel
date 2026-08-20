@@ -2,10 +2,12 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import * as React from 'react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { Action } from '@/core/actions/Action';
 import { DeleteBulkAction } from '@/core/actions/BulkAction';
 import { DeleteAction } from '@/core/actions/DeleteAction';
+import { ExportBulkAction } from '@/core/actions/ExportBulkAction';
+import { ReplicateAction, ReplicateBulkAction } from '@/core/actions/ReplicateAction';
 import { useActionRunner } from '@/core/actions/useActionRunner';
 import { setDataProvider } from '@/core/data/DataProvider';
 import { queryKeys } from '@/core/data/queryKeys';
@@ -15,6 +17,13 @@ import { defineResource } from '@/core/resources/Resource';
 import { ResourceProvider } from '@/core/resources/ResourceContext';
 import { TextColumn } from '@/core/tables/columns/TextColumn';
 import { makeQueryClient } from '../../helpers/render';
+
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+
+vi.mock('react-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react-router')>()),
+  useNavigate: () => navigate,
+}));
 
 vi.mock('@/core/ui/notify', () => ({
   notify: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn(), show: vi.fn() },
@@ -31,6 +40,15 @@ const resource = defineResource({
 
 const record: RecordShape = { id: 7, title: 'Hello world' };
 
+/** What `getOne` hands back: the row in the table carries only its columns. */
+const full: RecordShape = {
+  id: 7,
+  title: 'Hello world',
+  views: 12,
+  created_at: '2026-01-01',
+  updated_at: '2026-01-02',
+};
+
 const provider = {
   getList: vi.fn(),
   getOne: vi.fn(),
@@ -43,15 +61,18 @@ const provider = {
 
 beforeEach(() => {
   setDataProvider(provider);
+  navigate.mockReset();
   provider.delete.mockReset().mockResolvedValue(undefined);
   provider.deleteMany.mockReset().mockResolvedValue(undefined);
+  provider.getOne.mockReset().mockResolvedValue(full);
+  provider.create.mockReset().mockResolvedValue({ id: 8, title: 'Hello world' });
 });
 
 afterEach(() => {
   setDataProvider(restDataProvider);
 });
 
-function setup(action: Action, { withResource = true } = {}) {
+function setup(action: Action, { withResource = true, using = resource } = {}) {
   const queryClient = makeQueryClient();
 
   const { result } = renderHook(() => useActionRunner(action), {
@@ -59,7 +80,7 @@ function setup(action: Action, { withResource = true } = {}) {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter>
           {withResource ? (
-            <ResourceProvider resource={resource} refresh={() => undefined}>
+            <ResourceProvider resource={using} refresh={() => undefined}>
               {children}
             </ResourceProvider>
           ) : (
@@ -161,6 +182,171 @@ describe('built-in delete', () => {
 
     expect(provider.delete).toHaveBeenCalled();
     expect(handler).toHaveBeenCalled();
+  });
+});
+
+describe('built-in replicate', () => {
+  it('copies the record the provider knows, not the row the table drew', async () => {
+    const { result } = setup(ReplicateAction.make());
+
+    await result.current.run(payload());
+
+    expect(provider.getOne).toHaveBeenCalledWith('posts', '7');
+    expect(provider.create).toHaveBeenCalledWith('posts', { title: 'Hello world', views: 12 });
+  });
+
+  it('drops the columns the action excludes', async () => {
+    const { result } = setup(ReplicateAction.make().exclude('views'));
+
+    await result.current.run(payload());
+
+    expect(provider.create).toHaveBeenCalledWith('posts', { title: 'Hello world' });
+  });
+
+  it('passes the copy and its source through the mutator', async () => {
+    const mutate = vi.fn(async (replica: RecordShape) => ({ ...replica, title: 'Hello (copy)' }));
+    const { result } = setup(ReplicateAction.make().beforeReplicaSaved(mutate));
+
+    await result.current.run(payload());
+
+    expect(mutate).toHaveBeenCalledWith({ title: 'Hello world', views: 12 }, full);
+    expect(provider.create).toHaveBeenCalledWith('posts', {
+      title: 'Hello (copy)',
+      views: 12,
+    });
+  });
+
+  it('opens the copy when a redirect is configured', async () => {
+    const { result } = setup(ReplicateAction.make().redirectTo('edit'));
+
+    await result.current.run(payload());
+
+    expect(navigate).toHaveBeenCalledWith('/posts/8/edit');
+  });
+
+  it('stays on the page by default', async () => {
+    const { result } = setup(ReplicateAction.make());
+
+    await result.current.run(payload());
+
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('copies every selected record in a bulk run, and redirects to none of them', async () => {
+    provider.getOne.mockImplementation((_resource: string, id: string) =>
+      Promise.resolve({ id, title: `Post ${String(id)}` }),
+    );
+    const { result } = setup(ReplicateBulkAction.make().redirectTo('edit'));
+
+    await result.current.run(payload({ record: null, records: [{ id: 1 }, { id: 2 }] }));
+
+    expect(provider.create).toHaveBeenNthCalledWith(1, 'posts', { title: 'Post 1' });
+    expect(provider.create).toHaveBeenNthCalledWith(2, 'posts', { title: 'Post 2' });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('has nothing to copy, and nowhere to go, without a record', async () => {
+    const { result } = setup(ReplicateAction.make().redirectTo('edit'));
+
+    await result.current.run(payload({ record: null }));
+
+    expect(provider.create).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('reports the built-in success message', async () => {
+    const { result } = setup(ReplicateAction.make());
+
+    await result.current.run(payload());
+
+    expect(notify.success).toHaveBeenCalledWith('Post duplicated.');
+  });
+});
+
+describe('built-in export', () => {
+  const rows = [
+    { id: 1, title: 'First', author: { name: 'Ada' } },
+    { id: 2, title: 'Second', author: { name: 'Grace' } },
+  ];
+
+  let click: MockInstance;
+
+  beforeEach(() => {
+    // jsdom would otherwise try to navigate to the blob URL.
+    click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:csv');
+  });
+
+  /** Reads back what `downloadCsv` put in the Blob. */
+  async function downloaded(): Promise<{ text: string; name: string }> {
+    const link = click.mock.instances[0] as HTMLAnchorElement;
+    const blob = (URL.createObjectURL as unknown as MockInstance).mock.calls[0][0] as Blob;
+    const text = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blob);
+    });
+    return { text, name: link.download };
+  }
+
+  it('downloads the selection under the table headers', async () => {
+    const { result } = setup(ExportBulkAction.make());
+
+    await result.current.run(payload({ record: null, records: rows }));
+
+    const { text, name } = await downloaded();
+    expect(text).toBe('Title\r\nFirst\r\nSecond');
+    expect(name).toBe(`posts-${new Date().toISOString().slice(0, 10)}.csv`);
+  });
+
+  it('exports the columns the action names, embeds included', async () => {
+    const action = ExportBulkAction.make().columns({ id: 'ID', 'author.name': 'Author' });
+    const { result } = setup(action);
+
+    await result.current.run(payload({ record: null, records: rows }));
+
+    expect((await downloaded()).text).toBe('ID,Author\r\n1,Ada\r\n2,Grace');
+  });
+
+  it('honours a custom file name and delimiter', async () => {
+    const action = ExportBulkAction.make()
+      .columns({ id: 'ID', title: 'Title' })
+      .fileName(() => 'chosen.csv')
+      .delimiter(';');
+    const { result } = setup(action);
+
+    await result.current.run(payload({ record: null, records: rows }));
+
+    const { text, name } = await downloaded();
+    expect(text).toBe('ID;Title\r\n1;First\r\n2;Second');
+    expect(name).toBe('chosen.csv');
+  });
+
+  it('exports the one row a row action was rendered against', async () => {
+    const { result } = setup(ExportBulkAction.make());
+
+    await result.current.run(payload());
+
+    expect((await downloaded()).text).toBe('Title\r\nHello world');
+  });
+
+  it('falls back to the record keys when the resource declares no columns', async () => {
+    const bare = defineResource({ name: 'notes', table: { columns: [] } });
+    const { result } = setup(ExportBulkAction.make(), { using: bare });
+
+    await result.current.run(payload({ record: null, records: [{ id: 1, body: 'Hi' }] }));
+
+    expect((await downloaded()).text).toBe('ID,Body\r\n1,Hi');
+  });
+
+  it('fails with a readable message when nothing is selected', async () => {
+    const { result } = setup(ExportBulkAction.make());
+
+    await expect(result.current.run(payload({ record: null }))).rejects.toThrow(
+      'There is nothing to export.',
+    );
+
+    expect(click).not.toHaveBeenCalled();
   });
 });
 

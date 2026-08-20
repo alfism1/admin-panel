@@ -9,6 +9,8 @@ import type {
   BuiltinAction,
   ConfirmationOptions,
   DialogWidth,
+  ExportOptions,
+  ReplicateOptions,
 } from './types';
 
 export type RecordPredicate = boolean | ((record: RecordShape | null) => boolean);
@@ -33,6 +35,10 @@ export interface ActionConfig {
   failureNotification?: string | false;
   /** Set by the built-in actions so the renderer can fill in resource defaults. */
   builtin?: BuiltinAction;
+  /** Set by `ReplicateAction`; read by the runner when it builds the copy. */
+  replicate?: ReplicateOptions;
+  /** Set by `ExportBulkAction`; read by the runner when it writes the CSV. */
+  export?: ExportOptions;
   /** Icon-only rendering, used for compact row action bars. */
   iconOnly?: boolean;
 }

@@ -2,6 +2,7 @@ import { Action } from '@/core/actions/Action';
 import { BulkAction, DeleteBulkAction } from '@/core/actions/BulkAction';
 import { DeleteAction } from '@/core/actions/DeleteAction';
 import { EditAction } from '@/core/actions/EditAction';
+import { ExportBulkAction } from '@/core/actions/ExportBulkAction';
 import { ViewAction } from '@/core/actions/ViewAction';
 import { apiClient } from '@/core/data/apiClient';
 import { DatePicker } from '@/core/forms/fields/DatePicker';
@@ -168,6 +169,16 @@ export const UserResource = defineResource({
           );
         })
         .successNotification('Selected users are now active.'),
+      // Named columns rather than the table's, so the export carries the email
+      // and the role name whether or not those columns are toggled on.
+      ExportBulkAction.make().columns({
+        id: 'ID',
+        name: 'Name',
+        email: 'Email',
+        'role.name': 'Role',
+        is_active: 'Active',
+        created_at: 'Registered',
+      }),
       DeleteBulkAction.make(),
     ],
 

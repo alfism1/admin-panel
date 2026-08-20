@@ -65,3 +65,10 @@ jobs:
         run: pnpm build
         env:
           VITE_USE_MOCK: 'true'
+
+      # The scaffolder rewrites four files in this repo through anchored string
+      # replacements. This step fails the moment one of those anchors stops
+      # matching, which is the only warning before a published `npm create
+      # admin-panel` starts emitting broken projects.
+      - name: Build the scaffolder template
+        run: pnpm build:template
